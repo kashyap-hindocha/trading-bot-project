@@ -11,13 +11,27 @@ import hmac
 import hashlib
 import time
 import requests
-from dotenv import load_dotenv
 
-# Load environment variables
-load_dotenv()
+# Load environment variables manually (no dependencies needed)
+def load_env_file(filepath=".env"):
+    """Simple .env file parser without requiring python-dotenv"""
+    env_vars = {}
+    try:
+        with open(filepath, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    key, value = line.split('=', 1)
+                    env_vars[key.strip()] = value.strip()
+    except FileNotFoundError:
+        pass
+    return env_vars
 
-API_KEY = os.getenv("COINDCX_API_KEY")
-API_SECRET = os.getenv("COINDCX_API_SECRET")
+# Try multiple .env locations
+env_vars = load_env_file(".env") or load_env_file("/home/ubuntu/trading-bot/.env")
+
+API_KEY = env_vars.get("COINDCX_API_KEY") or os.getenv("COINDCX_API_KEY")
+API_SECRET = env_vars.get("COINDCX_API_SECRET") or os.getenv("COINDCX_API_SECRET")
 
 if not API_KEY or not API_SECRET:
     print("❌ Error: COINDCX_API_KEY and COINDCX_API_SECRET not found in .env file")
