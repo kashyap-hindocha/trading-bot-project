@@ -830,6 +830,12 @@ async function checkBotStatus() {
 
 // ── Charts ────────────────────────────────
 function initCharts() {
+  // Destroy existing chart instances to prevent canvas reuse error
+  if (equityChart) equityChart.destroy();
+  if (pnlChart) pnlChart.destroy();
+  if (priceChart) priceChart.destroy();
+  if (pairPnlChart) pairPnlChart.destroy();
+
   const baseOpts = {
     responsive: true,
     maintainAspectRatio: false,
@@ -857,22 +863,6 @@ function initCharts() {
   pnlChart = new Chart(document.getElementById('pnlChart'), {
     type: 'bar',
     data: { labels: [], datasets: [{ data: [], backgroundColor: ctx => ctx.raw >= 0 ? 'rgba(0,255,136,0.7)' : 'rgba(255,59,92,0.7)', borderRadius: 2 }] },
-    options: { ...baseOpts }
-  });
-
-  priceChart = new Chart(document.getElementById('priceChart'), {
-    type: 'line',
-    data: { labels: [], datasets: [
-      { label: 'Price', data: [], borderColor: '#00e5ff', backgroundColor: 'rgba(0,229,255,0.08)', borderWidth: 2, fill: true, tension: 0.2, pointRadius: 0 },
-      { label: 'Real Trades', type: 'scatter', data: [], pointRadius: 5, pointBackgroundColor: '#00ff88' },
-      { label: 'Paper Trades', type: 'scatter', data: [], pointRadius: 5, pointBackgroundColor: '#ffd230' },
-    ] },
-    options: { ...baseOpts, plugins: { legend: { display: true, labels: { color: '#4a6070', font: { family: 'Space Mono', size: 10 } } } } }
-  });
-
-  pairPnlChart = new Chart(document.getElementById('pairPnlChart'), {
-    type: 'line',
-    data: { labels: [], datasets: [{ data: [], borderColor: '#00ff88', backgroundColor: 'rgba(0,255,136,0.1)', borderWidth: 2, fill: true, tension: 0.25, pointRadius: 0 }] },
     options: { ...baseOpts }
   });
 
