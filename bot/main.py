@@ -256,6 +256,12 @@ def _run_paper_trade(current_price: float, signal: str):
     quantity = pair_config["quantity"] if pair_config else strategy.CONFIG["quantity"]
     leverage = pair_config["leverage"] if pair_config else strategy.CONFIG["leverage"]
 
+    wallet_balance = db.get_paper_wallet_balance()
+    if wallet_balance is None or wallet_balance <= 0:
+        logger.warning("PAPER wallet not initialized or empty")
+        db.log_event("WARNING", "PAPER wallet not initialized or empty")
+        return
+
     # Calculate TP/SL
     tp_price, sl_price = strategy.calculate_tp_sl(current_price, signal)
 
@@ -263,6 +269,13 @@ def _run_paper_trade(current_price: float, signal: str):
     order_id = f"PAPER-{int(time.time() * 1000)}"
     position_id = f"PAPER-POS-{int(time.time() * 1000)}"
     entry_fee = current_price * quantity * TAKER_FEE_RATE
+
+    if entry_fee > wallet_balance:
+        logger.warning("PAPER wallet insufficient for fee")
+        db.log_event("WARNING", "PAPER wallet insufficient for fee")
+        return
+
+    db.set_paper_wallet_balance(wallet_balance - entry_fee)
 
     db.insert_paper_trade(
         pair=PAIR,

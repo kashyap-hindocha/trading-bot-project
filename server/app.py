@@ -6,6 +6,7 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 import db
 from coindcx import CoinDCXREST
+import strategy
 
 app = Flask(__name__)
 CORS(app)
@@ -406,6 +407,102 @@ def trading_mode():
 @app.route("/api/paper/balance")
 def paper_balance():
     return jsonify({"balance": db.get_paper_wallet_balance()})
+
+
+@app.route("/api/paper/reset", methods=["POST"])
+def paper_reset():
+    real_balance, _ = _get_real_balance()
+    db.set_paper_wallet_balance(real_balance)
+    db.log_event("INFO", f"Paper balance reset to {real_balance}")
+    return jsonify({"success": True, "balance": real_balance})
+
+
+def _ema(values, period):
+    if len(values) < period:
+        return []
+    k = 2 / (period + 1)
+    ema = [sum(values[:period]) / period]
+    for v in values[period:]:
+        ema.append(v * k + ema[-1] * (1 - k))
+    return ema
+
+
+def _rsi(closes, period):
+    if len(closes) < period + 1:
+        return 50.0
+    deltas = [closes[i] - closes[i - 1] for i in range(1, len(closes))]
+    gains = [d if d > 0 else 0 for d in deltas[-period:]]
+    losses = [-d if d < 0 else 0 for d in deltas[-period:]]
+    avg_gain = sum(gains) / period
+    avg_loss = sum(losses) / period
+    if avg_loss == 0:
+        return 100.0
+    rs = avg_gain / avg_loss
+    return round(100 - (100 / (1 + rs)), 2)
+
+
+def _compute_readiness(closes):
+    ema_fast_series = _ema(closes, strategy.CONFIG["ema_fast"])
+    ema_slow_series = _ema(closes, strategy.CONFIG["ema_slow"])
+    if not ema_fast_series or not ema_slow_series:
+        return None
+
+    ema_fast = ema_fast_series[-1]
+    ema_slow = ema_slow_series[-1]
+    rsi = _rsi(closes, strategy.CONFIG["rsi_period"])
+    overbought = strategy.CONFIG["rsi_overbought"]
+    oversold = strategy.CONFIG["rsi_oversold"]
+
+    price = closes[-1] if closes else 0
+    gap = abs(ema_fast - ema_slow)
+    gap_pct = (gap / price) if price else 0
+    gap_max = 0.003
+
+    def score_gap(local_gap):
+        if local_gap >= gap_max:
+            return 0.0
+        return max(0.0, 1 - (local_gap / gap_max))
+
+    ema_buy_score = score_gap(gap) if ema_fast <= ema_slow else 0.0
+    ema_sell_score = score_gap(gap) if ema_fast >= ema_slow else 0.0
+
+    rsi_band = 20.0
+    rsi_buy_score = 1.0 if rsi <= oversold else max(0.0, 1 - ((rsi - oversold) / rsi_band))
+    rsi_sell_score = 1.0 if rsi >= overbought else max(0.0, 1 - ((overbought - rsi) / rsi_band))
+
+    buy_readiness = (ema_buy_score * 0.6 + rsi_buy_score * 0.4) * 100
+    sell_readiness = (ema_sell_score * 0.6 + rsi_sell_score * 0.4) * 100
+
+    readiness = round(max(buy_readiness, sell_readiness), 1)
+    bias = "BUY" if buy_readiness >= sell_readiness else "SELL"
+
+    return {
+        "readiness": readiness,
+        "bias": bias,
+        "ema_gap_pct": round(gap_pct * 100, 3),
+        "rsi": rsi,
+    }
+
+
+@app.route("/api/signal/readiness")
+def signal_readiness():
+    pairs_raw = request.args.get("pairs", "")
+    pairs = [p.strip() for p in pairs_raw.split(",") if p.strip()]
+    if not pairs:
+        return jsonify([])
+
+    client = CoinDCXREST("", "")
+    results = []
+    for pair in pairs[:20]:
+        try:
+            candles = client.get_candles(pair, strategy.CONFIG["interval"], limit=150)
+            closes = [c.get("close") for c in candles if c.get("close") is not None]
+            readiness = _compute_readiness(closes)
+            if readiness:
+                results.append({"pair": pair, **readiness})
+        except Exception as e:
+            app.logger.warning(f"Readiness failed for {pair}: {e}")
+    return jsonify(results)
 
 
 @app.route("/api/debug/wallet")

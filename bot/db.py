@@ -313,7 +313,8 @@ def set_paper_wallet_balance(balance: float):
 
 
 def init_paper_wallet_if_missing(balance: float):
-    if get_paper_wallet_balance() is None:
+    current = get_paper_wallet_balance()
+    if current is None or current <= 0:
         set_paper_wallet_balance(balance)
 
 
