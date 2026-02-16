@@ -650,10 +650,10 @@ function renderLogs(logs) {
     </div>
   `).join('');
 }
-Coin Manager ──────────────────────────
+
+// ── Coin Manager ──────────────────────────
 async function loadPairs() {
   try {
-loadPairs();
     const [available, configs] = await Promise.all([
       fetch(API + '/api/pairs/available').then(r => r.json()),
       fetch(API + '/api/pairs/config').then(r => r.json())
@@ -770,7 +770,6 @@ async function applyPairChanges() {
   }
 }
 
-// ── 
 // ── Boot ──────────────────────────────────
 initCharts();
 loadPairs();
