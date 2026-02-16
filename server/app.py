@@ -605,7 +605,7 @@ def signal_readiness():
         for pair in pairs[:20]:
             try:
                 candles = client.get_candles(pair, strategy.CONFIG["interval"], limit=150)
-                closes = [float(c.get("c", 0)) for c in candles if c.get("c") is not None]
+                closes = [c.get("close") for c in candles if c.get("close") is not None]
                 readiness = _compute_readiness(closes)
                 if readiness:
                     results.append({"pair": pair, **readiness})
@@ -640,12 +640,12 @@ def get_candles():
         for c in candles:
             try:
                 formatted.append({
-                    "timestamp": c.get("t", ""),
-                    "open": float(c.get("o", 0)),
-                    "high": float(c.get("h", 0)),
-                    "low": float(c.get("l", 0)),
-                    "close": float(c.get("c", 0)),
-                    "volume": float(c.get("v", 0))
+                    "timestamp": c.get("time", ""),
+                    "open": float(c.get("open", 0)),
+                    "high": float(c.get("high", 0)),
+                    "low": float(c.get("low", 0)),
+                    "close": float(c.get("close", 0)),
+                    "volume": float(c.get("volume", 0))
                 })
             except Exception:
                 pass
