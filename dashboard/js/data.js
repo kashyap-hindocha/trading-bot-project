@@ -162,6 +162,8 @@ async function loadPairs() {
     // Set pairsList from allPairs before updateReadiness
     const limit = parseInt(document.getElementById('pairListLimit')?.value || '50', 10);
     pairsList = allPairs.slice(0, limit).map(p => p.pair);
+    
+    console.log('pairsList for readiness:', pairsList);
 
     // Update readiness FIRST, then render with data
     await updateReadiness();
@@ -219,28 +221,45 @@ async function applyPairChanges() {
 }
 
 async function updateReadiness() {
-  if (!pairsList || !pairsList.length) return;
+  if (!pairsList || !pairsList.length) {
+    console.warn('updateReadiness: pairsList is empty or null');
+    return;
+  }
   try {
-    const resp = await fetch(API + '/api/signal/readiness?pairs=' + encodeURIComponent(pairsList.join(',')));
+    const url = API + '/api/signal/readiness?pairs=' + encodeURIComponent(pairsList.join(','));
+    console.log('Fetching readiness from:', url);
+    const resp = await fetch(url);
     const data = await resp.json();
     
-    if (!Array.isArray(data)) return;
+    console.log('Readiness response:', data);
+    
+    if (!Array.isArray(data)) {
+      console.warn('Readiness response is not an array:', data);
+      return;
+    }
+    
+    console.log(`Updating ${data.length} pairs with readiness`);
     
     // Store readiness data globally for sorting
     data.forEach(item => {
       if (!item || !item.pair) return;
       pairReadiness[item.pair] = item;
       
+      console.log(`Setting readiness for ${item.pair}: ${item.readiness}%`);
+      
       const bar = document.querySelector(`[data-readiness="${item.pair}"]`);
       const val = document.querySelector(`[data-readiness-val="${item.pair}"]`);
-      if (!bar || !val) return;
+      if (!bar || !val) {
+        console.warn(`Elements not found for ${item.pair}`);
+        return;
+      }
       const pct = Math.min(100, Math.max(0, item.readiness || 0));
       bar.style.width = pct + '%';
       val.textContent = `${pct}%`;
     });
   } catch (e) {
     // ignore readiness errors
-    console.debug('updateReadiness error:', e);
+    console.error('updateReadiness error:', e);
   }
 }
 
