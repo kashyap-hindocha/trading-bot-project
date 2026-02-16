@@ -527,44 +527,77 @@ def _rsi(closes, period):
 
 
 def _compute_readiness(closes):
+    """
+    Compute readiness using ACTUAL strategy.calculate_confidence() logic.
+    This ensures dashboard alignment with real trade execution.
+    """
+    if len(closes) < strategy.CONFIG["ema_slow"] + 5:
+        return None
+    
     ema_fast_series = _ema(closes, strategy.CONFIG["ema_fast"])
     ema_slow_series = _ema(closes, strategy.CONFIG["ema_slow"])
-    if not ema_fast_series or not ema_slow_series:
+    if not ema_fast_series or not ema_slow_series or len(ema_fast_series) < 2:
         return None
 
     ema_fast = ema_fast_series[-1]
     ema_slow = ema_slow_series[-1]
+    ema_fast_prev = ema_fast_series[-2]
+    ema_slow_prev = ema_slow_series[-2]
     rsi = _rsi(closes, strategy.CONFIG["rsi_period"])
-    overbought = strategy.CONFIG["rsi_overbought"]
-    oversold = strategy.CONFIG["rsi_oversold"]
-
+    
     price = closes[-1] if closes else 0
-    gap = abs(ema_fast - ema_slow)
-    gap_pct = (gap / price) if price else 0
-    gap_max = 0.003
 
-    def score_gap(local_gap):
-        if local_gap >= gap_max:
-            return 0.0
-        return max(0.0, 1 - (local_gap / gap_max))
+    # Detect crossovers (same as strategy.py)
+    crossed_up = (ema_fast_prev <= ema_slow_prev and ema_fast > ema_slow)
+    crossed_down = (ema_fast_prev >= ema_slow_prev and ema_fast < ema_slow)
 
-    ema_buy_score = score_gap(gap) if ema_fast <= ema_slow else 0.0
-    ema_sell_score = score_gap(gap) if ema_fast >= ema_slow else 0.0
+    buy_confidence = 0.0
+    sell_confidence = 0.0
 
-    rsi_band = 20.0
-    rsi_buy_score = 1.0 if rsi <= oversold else max(0.0, 1 - ((rsi - oversold) / rsi_band))
-    rsi_sell_score = 1.0 if rsi >= overbought else max(0.0, 1 - ((overbought - rsi) / rsi_band))
+    # BUY signal logic
+    if crossed_up and rsi < strategy.CONFIG["rsi_overbought"]:
+        # EMA crossover
+        buy_confidence += 40
+        
+        # RSI alignment
+        if rsi < strategy.CONFIG["rsi_oversold"]:
+            buy_confidence += 40
+        else:
+            rsi_alignment = (strategy.CONFIG["rsi_overbought"] - rsi) / strategy.CONFIG["rsi_overbought"]
+            buy_confidence += 40 * rsi_alignment
+        
+        # Trend strength
+        ema_diff = abs(ema_fast - ema_slow)
+        ema_separation = abs(ema_slow_series[-1] - ema_fast_series[-1])
+        if ema_separation > 0:
+            trend_strength = min(1.0, ema_separation / (price * 0.02))
+            buy_confidence += 20 * trend_strength
 
-    buy_readiness = (ema_buy_score * 0.6 + rsi_buy_score * 0.4) * 100
-    sell_readiness = (ema_sell_score * 0.6 + rsi_sell_score * 0.4) * 100
+    # SELL signal logic
+    if crossed_down and rsi > strategy.CONFIG["rsi_oversold"]:
+        # EMA crossover
+        sell_confidence += 40
+        
+        # RSI alignment
+        if rsi > strategy.CONFIG["rsi_overbought"]:
+            sell_confidence += 40
+        else:
+            rsi_alignment = (rsi - strategy.CONFIG["rsi_oversold"]) / (100 - strategy.CONFIG["rsi_oversold"])
+            sell_confidence += 40 * rsi_alignment
+        
+        # Trend strength
+        ema_diff = abs(ema_fast - ema_slow)
+        ema_separation = abs(ema_slow_series[-1] - ema_fast_series[-1])
+        if ema_separation > 0:
+            trend_strength = min(1.0, ema_separation / (price * 0.02))
+            sell_confidence += 20 * trend_strength
 
-    readiness = round(max(buy_readiness, sell_readiness), 1)
-    bias = "BUY" if buy_readiness >= sell_readiness else "SELL"
+    readiness = round(max(buy_confidence, sell_confidence), 1)
+    bias = "BUY" if buy_confidence >= sell_confidence else "SELL"
 
     return {
         "readiness": readiness,
         "bias": bias,
-        "ema_gap_pct": round(gap_pct * 100, 3),
         "rsi": rsi,
     }
 
