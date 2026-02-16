@@ -1,0 +1,17 @@
+[Unit]
+Description=Trading Bot Flask API
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/trading-bot
+Environment=PATH=/home/ubuntu/trading-bot/venv/bin
+ExecStart=/home/ubuntu/trading-bot/venv/bin/python server/app.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
