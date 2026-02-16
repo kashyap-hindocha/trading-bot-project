@@ -314,6 +314,25 @@
   .panel-tools input:focus,
   .panel-tools select:focus { outline: none; border-color: var(--accent); }
 
+  .panel-tools {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    margin-left: auto;
+  }
+  .panel-tools input,
+  .panel-tools select {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 6px 8px;
+  }
+  .panel-tools input:focus,
+  .panel-tools select:focus { outline: none; border-color: var(--accent); }
+
   .chart-wrap { position: relative; height: 200px; }
 
   .table-panel {
@@ -694,11 +713,15 @@
 const API = '';  // empty = same host, goes through Nginx proxy
 const REFRESH_MS = 5000;
 
-let equityChart, pnlChart;
+let equityChart, pnlChart, priceChart, pairPnlChart;
 let botRunning = false;
 let pairConfigs = {}; // Store current pair configurations
 let tradingMode = 'REAL';
 let pairsList = [];
+let allPairs = [];
+let selectedPair = '';
+let latestTrades = [];
+let latestPaperTrades = [];
 
 function showToast(msg, type = 'success') {
   const t = document.getElementById('toast');
@@ -852,6 +875,22 @@ function initCharts() {
     data: { labels: [], datasets: [{ data: [], borderColor: '#00ff88', backgroundColor: 'rgba(0,255,136,0.1)', borderWidth: 2, fill: true, tension: 0.25, pointRadius: 0 }] },
     options: { ...baseOpts }
   });
+
+  priceChart = new Chart(document.getElementById('priceChart'), {
+    type: 'line',
+    data: { labels: [], datasets: [
+      { label: 'Price', data: [], borderColor: '#00e5ff', backgroundColor: 'rgba(0,229,255,0.08)', borderWidth: 2, fill: true, tension: 0.2, pointRadius: 0 },
+      { label: 'Real Trades', type: 'scatter', data: [], pointRadius: 5, pointBackgroundColor: '#00ff88' },
+      { label: 'Paper Trades', type: 'scatter', data: [], pointRadius: 5, pointBackgroundColor: '#ffd230' },
+    ] },
+    options: { ...baseOpts, plugins: { legend: { display: true, labels: { color: '#4a6070', font: { family: 'Space Mono', size: 10 } } } } }
+  });
+
+  pairPnlChart = new Chart(document.getElementById('pairPnlChart'), {
+    type: 'line',
+    data: { labels: [], datasets: [{ data: [], borderColor: '#00ff88', backgroundColor: 'rgba(0,255,136,0.1)', borderWidth: 2, fill: true, tension: 0.25, pointRadius: 0 }] },
+    options: { ...baseOpts }
+  });
 }
 
 // ── Data fetch ────────────────────────────
@@ -883,6 +922,9 @@ async function fetchAll() {
         : '—';
     });
 
+    latestTrades = trades || [];
+    latestPaperTrades = paperTrades || [];
+
     renderStats(stats);
     renderEquity(equity);
     renderTrades(trades);
@@ -890,6 +932,7 @@ async function fetchAll() {
     renderLogs(logs);
     renderPaperStats(paperStats, paperTrades);
     renderPaperTrades(paperTrades);
+    updatePairPnlChart();
 
     document.getElementById('lastUpdate').textContent = 'Updated ' + new Date().toLocaleTimeString();
   } catch (e) {
@@ -1032,75 +1075,205 @@ async function loadPairs() {
           <div class="coin-toggle ${enabled ? 'on' : ''}" onclick="togglePair('${p.pair}')"></div>
           <div class="coin-info">
             <div class="coin-name">${baseCoin}/USDT</div>
-            <div class="coin-params">
-              <input type="number" class="coin-input" placeholder="Lev" 
-                     value="${cfg.leverage}" min="1" max="20" 
-                     onchange="updatePairConfig('${p.pair}', 'leverage', this.value)">
-              <input type="number" class="coin-input" placeholder="Qty" 
-                     value="${cfg.quantity}" step="0.001" min="0.001"
-                     onchange="updatePairConfig('${p.pair}', 'quantity', this.value)">
+            <div class="coin-manager">
+              <div class="panel-title">
+                Coin Manager — Select pairs to trade
+                <div class="panel-tools">
+                  <input type="text" id="pairSearch" placeholder="Search pairs..." oninput="renderPairs()">
+                  <select id="pairListLimit" onchange="renderPairs()">
+                    <option value="80">Show 80</option>
+                    <option value="150">Show 150</option>
+                    <option value="1000">Show All</option>
+                  </select>
+                </div>
+              </div>
+              <div class="coin-grid" id="coinGrid">
+                <div class="loading">Loading available pairs...</div>
+              </div>
+              <button class="apply-btn" id="applyCoinsBtn" onclick="applyPairChanges()" disabled>Apply Changes & Restart Bots</button>
             </div>
-            <div class="readiness">
-              <span class="readiness-label">Signal</span>
-              <div class="readiness-bar"><span data-readiness="${p.pair}"></span></div>
-              <span class="readiness-val" data-readiness-val="${p.pair}">—</span>
+
+            <div class="chart-panel wide">
+              <div class="panel-title">
+                Live Price — Selected Pair
+                <div class="panel-tools">
+                  <select id="pairSelect" onchange="onPairChange()"></select>
+                </div>
+              </div>
+              <div class="chart-wrap"><canvas id="priceChart"></canvas></div>
             </div>
-          </div>
-        </div>
-      `;
-    }).join('');
+
+            <div class="chart-panel side">
+              <div class="panel-title">Pair PnL</div>
+              <div class="chart-wrap"><canvas id="pairPnlChart"></canvas></div>
+            </div>
+
+            <div class="chart-panel wide">
+              <div class="panel-title">Equity Curve</div>
+              <div class="chart-wrap"><canvas id="equityChart"></canvas></div>
+            </div>
+
+            <div class="chart-panel side">
+              <div class="panel-title">PnL / Trade</div>
+              <div class="chart-wrap"><canvas id="pnlChart"></canvas></div>
+            </div>
 
     document.getElementById('applyCoinsBtn').disabled = false;
+    allPairs = available || [];
+
+    renderPairs();
+    updatePairSelect();
+    document.getElementById('applyCoinsBtn').disabled = false;
     updateReadiness();
-  } catch (e) {
-    console.error('Error loading pairs:', e);
-    document.getElementById('coinGrid').innerHTML = '<div class="loading">Error loading pairs</div>';
-  }
-}
-
-function togglePair(pair) {
-  const cfg = pairConfigs[pair];
-  cfg.enabled = cfg.enabled === 1 ? 0 : 1;
-  
-  const card = document.querySelector(`[data-pair="${pair}"]`);
-  const toggle = card.querySelector('.coin-toggle');
-  
-  if (cfg.enabled) {
-    card.classList.add('enabled');
-    toggle.classList.add('on');
-  } else {
-    card.classList.remove('enabled');
-    toggle.classList.remove('on');
-  }
-}
-
-function updatePairConfig(pair, field, value) {
-  pairConfigs[pair][field] = field === 'leverage' ? parseInt(value) : parseFloat(value);
-}
-
-async function applyPairChanges() {
-  const btn = document.getElementById('applyCoinsBtn');
-  btn.disabled = true;
-  btn.textContent = 'Applying...';
-
-  try {
-    const pairs = Object.keys(pairConfigs).map(pair => ({
-      pair,
-      enabled: pairConfigs[pair].enabled,
-      leverage: pairConfigs[pair].leverage,
-      quantity: pairConfigs[pair].quantity
-    }));
-
-    const resp = await fetch(API + '/api/pairs/config/bulk', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pairs })
-    });
 
     const data = await resp.json();
     if (data.success) {
       showToast('Pair settings updated! Restart bots to apply.', 'success');
       
+
+function renderPairs() {
+  const grid = document.getElementById('coinGrid');
+  const query = (document.getElementById('pairSearch')?.value || '').toUpperCase();
+  const limit = parseInt(document.getElementById('pairListLimit')?.value || '80', 10);
+  const filtered = allPairs.filter(p => p.pair.includes(query));
+  const pairs = filtered.slice(0, limit);
+  pairsList = pairs.map(p => p.pair);
+
+  if (!pairs.length) {
+    grid.innerHTML = '<div class="loading">No pairs match search</div>';
+    return;
+  }
+
+  grid.innerHTML = pairs.map(p => {
+    const cfg = pairConfigs[p.pair] || { enabled: 0, leverage: 5, quantity: 0.001 };
+    pairConfigs[p.pair] = cfg;
+
+    const baseCoin = p.pair.replace('B-', '').replace('_USDT', '');
+    const enabled = cfg.enabled === 1;
+
+    return `
+      <div class="coin-card ${enabled ? 'enabled' : ''}" data-pair="${p.pair}">
+        <div class="coin-toggle ${enabled ? 'on' : ''}" onclick="togglePair('${p.pair}')"></div>
+        <div class="coin-info">
+          <div class="coin-name">${baseCoin}/USDT</div>
+          <div class="coin-params">
+            <input type="number" class="coin-input" placeholder="Lev" 
+                   value="${cfg.leverage}" min="1" max="20" 
+                   onchange="updatePairConfig('${p.pair}', 'leverage', this.value)">
+            <input type="number" class="coin-input" placeholder="Qty" 
+                   value="${cfg.quantity}" step="0.001" min="0.001"
+                   onchange="updatePairConfig('${p.pair}', 'quantity', this.value)">
+          </div>
+          <div class="readiness">
+            <span class="readiness-label">Signal</span>
+            <div class="readiness-bar"><span data-readiness="${p.pair}"></span></div>
+            <span class="readiness-val" data-readiness-val="${p.pair}">—</span>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  updateReadiness();
+}
+
+function updatePairSelect() {
+  const select = document.getElementById('pairSelect');
+  if (!select || !allPairs.length) return;
+
+  const enabled = Object.keys(pairConfigs).filter(p => pairConfigs[p]?.enabled === 1);
+  const list = enabled.length ? enabled : allPairs.map(p => p.pair);
+
+  select.innerHTML = list.map(p => `<option value="${p}">${p.replace('B-', '').replace('_USDT','')}/USDT</option>`).join('');
+
+  if (!selectedPair) {
+    selectedPair = list[0] || '';
+  }
+  select.value = selectedPair;
+  updatePriceChart();
+}
+
+function onPairChange() {
+  const select = document.getElementById('pairSelect');
+  selectedPair = select.value;
+  updatePriceChart();
+  updatePairPnlChart();
+}
+
+async function updatePriceChart() {
+  if (!selectedPair) return;
+  try {
+    const resp = await fetch(API + `/api/candles?pair=${encodeURIComponent(selectedPair)}&limit=200`);
+    const candles = await resp.json();
+    const labels = candles.map(c => (c.timestamp || c.t || '').toString().slice(11, 16));
+    const prices = candles.map(c => Number(c.close ?? c.c ?? 0));
+
+    priceChart.data.labels = labels;
+    priceChart.data.datasets[0].data = prices;
+
+    const tradeMarks = buildTradeMarks(selectedPair, candles, latestTrades);
+    const paperMarks = buildTradeMarks(selectedPair, candles, latestPaperTrades);
+    priceChart.data.datasets[1].data = tradeMarks;
+    priceChart.data.datasets[2].data = paperMarks;
+    priceChart.update('none');
+  } catch (e) {
+    // ignore chart errors
+  }
+}
+
+function buildTradeMarks(pair, candles, trades) {
+  if (!Array.isArray(trades)) return [];
+  const marks = [];
+  const labels = candles.map(c => (c.timestamp || c.t || '').toString().slice(11, 16));
+
+  trades.filter(t => t.pair === pair).forEach(t => {
+    const entry = t.entry_price;
+    if (entry != null) {
+      const idx = findNearestIndex(candles, t.opened_at);
+      if (idx !== -1) {
+        marks.push({ x: labels[idx], y: entry });
+      }
+    }
+    if (t.status === 'closed' && t.exit_price != null) {
+      const idx = findNearestIndex(candles, t.closed_at || t.opened_at);
+      if (idx !== -1) {
+        marks.push({ x: labels[idx], y: t.exit_price });
+      }
+    }
+  });
+  return marks;
+}
+
+function findNearestIndex(candles, isoTime) {
+  if (!isoTime) return -1;
+  const target = new Date(isoTime).getTime();
+  let best = -1;
+  let bestDiff = Infinity;
+  candles.forEach((c, i) => {
+    const ts = new Date(c.timestamp || c.t || 0).getTime();
+    const diff = Math.abs(ts - target);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      best = i;
+    }
+  });
+  return best;
+}
+
+function updatePairPnlChart() {
+  if (!selectedPair) return;
+  const closed = latestTrades.filter(t => t.pair === selectedPair && t.status === 'closed' && t.pnl != null);
+  const pnlSeries = [];
+  let total = 0;
+  closed.slice(-50).forEach((t) => {
+    total += parseFloat(t.pnl);
+    pnlSeries.push(total);
+  });
+
+  pairPnlChart.data.labels = pnlSeries.map((_, i) => `T${i + 1}`);
+  pairPnlChart.data.datasets[0].data = pnlSeries;
+  pairPnlChart.update('none');
+}
       // Auto-restart if bot is running
       if (botRunning) {
         setTimeout(async () => {
@@ -1161,6 +1334,7 @@ fetchAll();
 setInterval(fetchAll, REFRESH_MS);
 setInterval(checkBotStatus, REFRESH_MS);
 setInterval(updateReadiness, REFRESH_MS * 2);
+setInterval(updatePriceChart, REFRESH_MS * 2);
 setInterval(updatePriceChart, REFRESH_MS * 2);
 </script>
 </body>
