@@ -26,15 +26,6 @@ from coindcx import CoinDCXREST, CoinDCXSocket
 
 load_dotenv("/home/ubuntu/trading-bot/.env")
 
-# ── Parse command-line arguments ─────────────
-PAIR     = strategy.CONFIG["pair"]      # Default pair
-INTERVAL = strategy.CONFIG["interval"]
-
-if len(sys.argv) > 1:
-    # Allow overriding pair from command line: python main.py B-ETH_USDT
-    PAIR = sys.argv[1]
-    logger.info(f"Using pair from command line: {PAIR}")
-
 # ── Logging ──────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
@@ -46,12 +37,23 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# ── Parse command-line arguments ─────────────
+PAIR     = strategy.CONFIG["pair"]      # Default pair
+INTERVAL = strategy.CONFIG["interval"]
+
+if len(sys.argv) > 1:
+    # Allow overriding pair from command line: python main.py B-ETH_USDT
+    PAIR = sys.argv[1]
+    logger.info(f"Using pair from command line: {PAIR}")
+
 # ── Init ─────────────────────────────────────
 API_KEY    = os.getenv("COINDCX_API_KEY")
 API_SECRET = os.getenv("COINDCX_API_SECRET")
 
 rest   = CoinDCXREST(API_KEY, API_SECRET)
 socket = CoinDCXSocket(API_KEY, API_SECRET)
+
+TAKER_FEE_RATE = 0.0005  # 0.05% taker fee
 
 # In-memory candle buffer (last 200 candles)
 candle_buffer: list[dict] = []
@@ -92,14 +94,94 @@ def _update_candle(data: dict):
 
     # Only evaluate strategy on closed candles
     if candle["is_closed"]:
+        _check_paper_positions(candle)
         _run_strategy(candle["close"])
+
+
+def _get_pair_config():
+    try:
+        all_configs = db.get_all_pair_configs()
+        return next((c for c in all_configs if c["pair"] == PAIR), None)
+    except Exception:
+        return None
+
+
+def _get_trading_mode() -> str:
+    try:
+        return db.get_trading_mode()
+    except Exception:
+        return "REAL"
+
+
+def _calc_pnl(side: str, entry_price: float, exit_price: float, quantity: float, leverage: int) -> float:
+    if side == "buy":
+        return (exit_price - entry_price) * quantity * leverage
+    return (entry_price - exit_price) * quantity * leverage
+
+
+def _check_paper_positions(candle: dict):
+    if _get_trading_mode() != "PAPER":
+        return
+
+    open_trades = [t for t in db.get_open_paper_trades() if t.get("pair") == PAIR]
+    if not open_trades:
+        return
+
+    high = candle.get("high")
+    low = candle.get("low")
+    if high is None or low is None:
+        return
+
+    wallet_balance = db.get_paper_wallet_balance() or 0.0
+
+    for t in open_trades:
+        side = t.get("side")
+        tp = t.get("tp_price")
+        sl = t.get("sl_price")
+        if tp is None or sl is None:
+            continue
+
+        hit_tp = False
+        hit_sl = False
+
+        if side == "buy":
+            hit_tp = high >= tp
+            hit_sl = low <= sl
+        else:
+            hit_tp = low <= tp
+            hit_sl = high >= sl
+
+        if not hit_tp and not hit_sl:
+            continue
+
+        # Conservative: if both hit in same candle, take SL
+        exit_price = sl if hit_sl else tp
+
+        entry_price = float(t.get("entry_price") or 0)
+        quantity = float(t.get("quantity") or 0)
+        leverage = int(t.get("leverage") or 1)
+        entry_fee = float(t.get("fee_paid") or 0)
+        exit_fee = exit_price * quantity * TAKER_FEE_RATE
+
+        raw_pnl = _calc_pnl(side, entry_price, exit_price, quantity, leverage)
+        net_pnl = raw_pnl - entry_fee - exit_fee
+        total_fee = entry_fee + exit_fee
+
+        db.close_paper_trade(t.get("position_id"), exit_price, net_pnl, total_fee)
+        wallet_balance += net_pnl
+        logger.info(f"PAPER close {PAIR} | pnl={net_pnl:.4f} fee={total_fee:.4f}")
+        db.log_event("INFO", f"PAPER position closed {PAIR} pnl={net_pnl:.4f} fee={total_fee:.4f}")
+
+    db.set_paper_wallet_balance(wallet_balance)
 
 
 # ── Strategy execution
 # ─────────────────────────────────────────────
 def _run_strategy(current_price: float):
+    mode = _get_trading_mode()
+
     # Check max open trades limit
-    open_trades = db.get_open_trades()
+    open_trades = db.get_open_paper_trades() if mode == "PAPER" else db.get_open_trades()
     if len(open_trades) >= strategy.CONFIG["max_open_trades"]:
         return
 
@@ -111,17 +193,15 @@ def _run_strategy(current_price: float):
     db.log_event("INFO", f"Signal {signal} at {current_price} for {PAIR}")
 
     try:
+        if mode == "PAPER":
+            _run_paper_trade(current_price, signal)
+            return
+
         side       = "buy" if signal == "BUY" else "sell"
         order_type = "market_order"
         
         # Get pair-specific config from database, fallback to strategy defaults
-        pair_config = None
-        try:
-            all_configs = db.get_all_pair_configs()
-            pair_config = next((c for c in all_configs if c["pair"] == PAIR), None)
-        except:
-            pass
-        
+        pair_config = _get_pair_config()
         quantity = pair_config["quantity"] if pair_config else strategy.CONFIG["quantity"]
         leverage = pair_config["leverage"] if pair_config else strategy.CONFIG["leverage"]
         
@@ -170,6 +250,38 @@ def _run_strategy(current_price: float):
         db.log_event("ERROR", f"Order execution failed: {e}")
 
 
+def _run_paper_trade(current_price: float, signal: str):
+    side = "buy" if signal == "BUY" else "sell"
+    pair_config = _get_pair_config()
+    quantity = pair_config["quantity"] if pair_config else strategy.CONFIG["quantity"]
+    leverage = pair_config["leverage"] if pair_config else strategy.CONFIG["leverage"]
+
+    # Calculate TP/SL
+    tp_price, sl_price = strategy.calculate_tp_sl(current_price, signal)
+
+    # Simulate order placement
+    order_id = f"PAPER-{int(time.time() * 1000)}"
+    position_id = f"PAPER-POS-{int(time.time() * 1000)}"
+    entry_fee = current_price * quantity * TAKER_FEE_RATE
+
+    db.insert_paper_trade(
+        pair=PAIR,
+        side=side,
+        entry_price=current_price,
+        quantity=quantity,
+        leverage=leverage,
+        tp_price=tp_price,
+        sl_price=sl_price,
+        fee_paid=entry_fee,
+        order_id=order_id,
+        position_id=position_id,
+        strategy_note=f"EMA crossover signal {signal}",
+    )
+
+    logger.info(f"PAPER entry {PAIR} | side={side} qty={quantity} lev={leverage} fee={entry_fee:.4f}")
+    db.log_event("INFO", f"PAPER entry {PAIR} side={side} qty={quantity} lev={leverage}")
+
+
 # ─────────────────────────────────────────────
 #  WebSocket event handlers
 # ─────────────────────────────────────────────
@@ -183,6 +295,8 @@ def on_candlestick(data):
 def on_position_update(data):
     """Called when a position is opened/closed/updated."""
     try:
+        if _get_trading_mode() == "PAPER":
+            return
         pos_id = data.get("id", "")
         status = data.get("status", "")
 
@@ -209,9 +323,15 @@ def on_order_update(data):
 def _equity_snapshot_loop():
     while True:
         try:
-            wallet  = rest.get_wallet()
-            balance = float(wallet.get("balance", 0))
-            db.snapshot_equity(balance)
+            mode = _get_trading_mode()
+            if mode == "PAPER":
+                balance = db.get_paper_wallet_balance()
+                if balance is not None:
+                    db.snapshot_paper_equity(balance)
+            else:
+                wallet  = rest.get_wallet()
+                balance = float(wallet.get("balance", 0))
+                db.snapshot_equity(balance)
         except Exception as e:
             logger.warning(f"Equity snapshot failed: {e}")
         time.sleep(900)   # every 15 minutes

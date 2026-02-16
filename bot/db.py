@@ -69,6 +69,52 @@ def init_db():
         )
     """)
 
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS trading_mode (
+            id         INTEGER PRIMARY KEY CHECK (id = 1),
+            mode       TEXT NOT NULL,  -- REAL / PAPER
+            updated_at TEXT DEFAULT (datetime('now'))
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS paper_wallet (
+            id         INTEGER PRIMARY KEY CHECK (id = 1),
+            balance    REAL,
+            updated_at TEXT DEFAULT (datetime('now'))
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS paper_trades (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            pair          TEXT NOT NULL,
+            side          TEXT NOT NULL,       -- buy / sell
+            entry_price   REAL,
+            exit_price    REAL,
+            quantity      REAL,
+            leverage      INTEGER,
+            tp_price      REAL,
+            sl_price      REAL,
+            pnl           REAL,
+            fee_paid      REAL,
+            status        TEXT DEFAULT 'open', -- open / closed / cancelled
+            order_id      TEXT,
+            position_id   TEXT,
+            opened_at     TEXT,
+            closed_at     TEXT,
+            strategy_note TEXT
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS paper_equity_snapshots (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            balance    REAL,
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -221,3 +267,137 @@ def update_pair_enabled(pair: str, enabled: int):
     """, (pair, enabled))
     conn.commit()
     conn.close()
+
+
+# ── Trading mode ────────────────────────────
+def get_trading_mode() -> str:
+    conn = get_conn()
+    row = conn.execute("SELECT mode FROM trading_mode WHERE id=1").fetchone()
+    conn.close()
+    return row["mode"] if row and row.get("mode") else "REAL"
+
+
+def set_trading_mode(mode: str):
+    mode = mode.upper()
+    conn = get_conn()
+    conn.execute("""
+        INSERT INTO trading_mode (id, mode, updated_at)
+        VALUES (1, ?, datetime('now'))
+        ON CONFLICT(id) DO UPDATE SET
+            mode=excluded.mode,
+            updated_at=datetime('now')
+    """, (mode,))
+    conn.commit()
+    conn.close()
+
+
+# ── Paper wallet ────────────────────────────
+def get_paper_wallet_balance():
+    conn = get_conn()
+    row = conn.execute("SELECT balance FROM paper_wallet WHERE id=1").fetchone()
+    conn.close()
+    return row["balance"] if row and row.get("balance") is not None else None
+
+
+def set_paper_wallet_balance(balance: float):
+    conn = get_conn()
+    conn.execute("""
+        INSERT INTO paper_wallet (id, balance, updated_at)
+        VALUES (1, ?, datetime('now'))
+        ON CONFLICT(id) DO UPDATE SET
+            balance=excluded.balance,
+            updated_at=datetime('now')
+    """, (balance,))
+    conn.commit()
+    conn.close()
+
+
+def init_paper_wallet_if_missing(balance: float):
+    if get_paper_wallet_balance() is None:
+        set_paper_wallet_balance(balance)
+
+
+# ── Paper trades ────────────────────────────
+def insert_paper_trade(pair, side, entry_price, quantity, leverage, tp_price, sl_price,
+                       fee_paid=0.0, order_id="", position_id="", strategy_note=""):
+    conn = get_conn()
+    conn.execute("""
+        INSERT INTO paper_trades
+            (pair, side, entry_price, quantity, leverage, tp_price, sl_price,
+             fee_paid, order_id, position_id, opened_at, strategy_note)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+    """, (pair, side, entry_price, quantity, leverage, tp_price, sl_price,
+          fee_paid, order_id, position_id, datetime.utcnow().isoformat(), strategy_note))
+    conn.commit()
+    conn.close()
+
+
+def close_paper_trade(position_id, exit_price, pnl, fee_paid=0.0):
+    conn = get_conn()
+    conn.execute("""
+        UPDATE paper_trades
+        SET exit_price=?, pnl=?, fee_paid=?, status='closed', closed_at=?
+        WHERE position_id=?
+    """, (exit_price, pnl, fee_paid, datetime.utcnow().isoformat(), position_id))
+    conn.commit()
+    conn.close()
+
+
+def get_open_paper_trades():
+    conn = get_conn()
+    rows = conn.execute("SELECT * FROM paper_trades WHERE status='open'").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_all_paper_trades(limit=100):
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM paper_trades ORDER BY opened_at DESC LIMIT ?", (limit,)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_paper_trade_stats():
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT pnl, status FROM paper_trades WHERE status='closed'"
+    ).fetchall()
+    conn.close()
+
+    closed = [dict(r) for r in rows]
+    if not closed:
+        return {"total": 0, "wins": 0, "losses": 0, "win_rate": 0,
+                "total_pnl": 0, "avg_pnl": 0}
+
+    wins   = [t for t in closed if t["pnl"] and t["pnl"] > 0]
+    losses = [t for t in closed if t["pnl"] and t["pnl"] <= 0]
+    total_pnl = sum(t["pnl"] for t in closed if t["pnl"])
+
+    return {
+        "total":    len(closed),
+        "wins":     len(wins),
+        "losses":   len(losses),
+        "win_rate": round(len(wins) / len(closed) * 100, 1) if closed else 0,
+        "total_pnl": round(total_pnl, 4),
+        "avg_pnl":   round(total_pnl / len(closed), 4) if closed else 0,
+    }
+
+
+# ── Paper equity snapshots ──────────────────
+def snapshot_paper_equity(balance: float):
+    conn = get_conn()
+    conn.execute("INSERT INTO paper_equity_snapshots (balance) VALUES (?)", (balance,))
+    conn.commit()
+    conn.close()
+
+
+def get_paper_equity_history(limit=200):
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT balance, created_at FROM paper_equity_snapshots ORDER BY created_at ASC LIMIT ?",
+        (limit,)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]

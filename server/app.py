@@ -2,7 +2,7 @@ import sys
 import os
 sys.path.insert(0, '/home/ubuntu/trading-bot/bot')
 
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 import db
 from coindcx import CoinDCXREST
@@ -244,16 +244,15 @@ def _fetch_wallet_payload(key, secret, debug=False):
         return None
 
 
-@app.route("/api/status")
-def status():
+def _get_real_balance():
     balance = 0.0
     balance_currency = "INR"
     try:
         from dotenv import load_dotenv
         load_dotenv("/home/ubuntu/trading-bot/.env")
-        key    = os.getenv("COINDCX_API_KEY")
+        key = os.getenv("COINDCX_API_KEY")
         secret = os.getenv("COINDCX_API_SECRET")
-        
+
         if key and secret:
             client = CoinDCXREST(key, secret)
             payload = client.get_wallet()
@@ -263,7 +262,7 @@ def status():
                     balance = bal
                 if curr is not None:
                     balance_currency = curr
-    except Exception as exc:
+    except Exception:
         pass
 
     try:
@@ -276,6 +275,13 @@ def status():
     except Exception:
         pass
 
+    return balance, balance_currency
+
+
+@app.route("/api/status")
+def status():
+    balance, balance_currency = _get_real_balance()
+
     try:
         open_trades = db.get_open_trades()
         num_trades = len(open_trades)
@@ -287,6 +293,8 @@ def status():
         "balance": balance,
         "balance_currency": balance_currency,
         "open_trades": num_trades,
+        "mode": db.get_trading_mode(),
+        "paper_balance": db.get_paper_wallet_balance(),
     })
 
 
@@ -315,13 +323,28 @@ def stats():
     except Exception as e:
         app.logger.error(f"Error fetching stats: {e}")
         return jsonify({
-            "total_trades": 0,
-            "winning_trades": 0,
-            "losing_trades": 0,
+            "total": 0,
+            "wins": 0,
+            "losses": 0,
             "total_pnl": 0.0,
             "win_rate": 0.0,
-            "avg_win": 0.0,
-            "avg_loss": 0.0
+            "avg_pnl": 0.0
+        })
+
+
+@app.route("/api/paper/stats")
+def paper_stats():
+    try:
+        return jsonify(db.get_paper_trade_stats())
+    except Exception as e:
+        app.logger.error(f"Error fetching paper stats: {e}")
+        return jsonify({
+            "total": 0,
+            "wins": 0,
+            "losses": 0,
+            "total_pnl": 0.0,
+            "win_rate": 0.0,
+            "avg_pnl": 0.0
         })
 
 
@@ -334,6 +357,15 @@ def equity():
         return jsonify([])
 
 
+@app.route("/api/paper/equity")
+def paper_equity():
+    try:
+        return jsonify(db.get_paper_equity_history(limit=200))
+    except Exception as e:
+        app.logger.error(f"Error fetching paper equity: {e}")
+        return jsonify([])
+
+
 @app.route("/api/logs")
 def logs():
     try:
@@ -341,6 +373,39 @@ def logs():
     except Exception as e:
         app.logger.error(f"Error fetching logs: {e}")
         return jsonify([])
+
+
+@app.route("/api/paper/trades")
+def paper_trades():
+    try:
+        return jsonify(db.get_all_paper_trades(limit=100))
+    except Exception as e:
+        app.logger.error(f"Error fetching paper trades: {e}")
+        return jsonify([])
+
+
+@app.route("/api/mode", methods=["GET", "POST"])
+def trading_mode():
+    if request.method == "GET":
+        return jsonify({"mode": db.get_trading_mode()})
+
+    data = request.get_json() or {}
+    mode = str(data.get("mode", "REAL")).upper()
+    if mode not in ("REAL", "PAPER"):
+        return jsonify({"error": "mode must be REAL or PAPER"}), 400
+
+    if mode == "PAPER":
+        real_balance, _ = _get_real_balance()
+        db.init_paper_wallet_if_missing(real_balance)
+
+    db.set_trading_mode(mode)
+    db.log_event("INFO", f"Trading mode set to {mode}")
+    return jsonify({"success": True, "mode": mode})
+
+
+@app.route("/api/paper/balance")
+def paper_balance():
+    return jsonify({"balance": db.get_paper_wallet_balance()})
 
 
 @app.route("/api/debug/wallet")
