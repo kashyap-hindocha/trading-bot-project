@@ -43,13 +43,27 @@ print()
 
 # Test endpoints for futures wallet balance
 TEST_ENDPOINTS = [
-    "/exchange/v1/derivatives/futures/data/wallet_balances",
-    "/exchange/v1/derivatives/futures/user/wallet_balances",
-    "/exchange/v1/derivatives/futures/user/balance",
-    "/api/v1/derivatives/futures/data/wallet_balances",
-    "/exchange/v1/derivatives/futures/wallet_balances",
+    # Futures-specific endpoints (based on CoinDCX docs pattern)
+    "/exchange/v1/derivatives/futures/user/balances",
+    "/exchange/v1/derivatives/futures/user/balance", 
     "/exchange/v1/derivatives/futures/balances",
-    "/exchange/v1/derivatives/futures/user/wallet",
+    "/exchange/v1/derivatives/futures/balance",
+    "/exchange/v1/derivatives/futures/wallet",
+    "/exchange/v1/derivatives/futures/account/balance",
+    "/exchange/v1/derivatives/futures/user/account",
+    
+    # Alternative API versions
+    "/api/v1/futures/balances",
+    "/api/v1/futures/balance",
+    
+    # Spot balance endpoints (might show futures too)
+    "/exchange/v1/users/balances",
+    "/exchange/v1/users/balance_sheet",
+    "/exchange/v1/users/info",
+    
+    # Generic endpoints
+    "/exchange/v1/account",
+    "/exchange/v1/balance",
 ]
 
 BASE_URL = "https://api.coindcx.com"
@@ -163,7 +177,7 @@ for endpoint in TEST_ENDPOINTS:
         
         if result["success"]:
             response_data = result.get("response", {})
-            print(f"      Response: {json.dumps(response_data, indent=2)[:500]}...")
+            print(f"      Response preview: {json.dumps(response_data, indent=2)[:300]}...")
             
             # Try to extract balance
             balance = extract_balance_from_response(response_data)
@@ -177,12 +191,15 @@ for endpoint in TEST_ENDPOINTS:
                 })
             else:
                 print(f"      ⚠️  Response received but couldn't extract balance")
+                print(f"      Full response: {json.dumps(response_data, indent=2)}")
         elif "error" in result:
-            print(f"      Error: {result['error']}")
+            print(f"      ❌ Connection Error: {result['error']}")
         else:
             error_msg = result.get("response", {})
             if isinstance(error_msg, dict):
-                print(f"      Error: {error_msg.get('message', error_msg)}")
+                print(f"      ❌ API Error: {error_msg.get('message', error_msg.get('error', error_msg))}")
+            else:
+                print(f"      ❌ Response: {error_msg}")
     
     print()
 
