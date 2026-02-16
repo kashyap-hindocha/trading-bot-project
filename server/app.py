@@ -411,10 +411,15 @@ def paper_balance():
 
 @app.route("/api/paper/reset", methods=["POST"])
 def paper_reset():
-    real_balance, _ = _get_real_balance()
-    db.set_paper_wallet_balance(real_balance)
-    db.log_event("INFO", f"Paper balance reset to {real_balance}")
-    return jsonify({"success": True, "balance": real_balance})
+    try:
+        real_balance, _ = _get_real_balance()
+        db.set_paper_wallet_balance(real_balance)
+        db.log_event("INFO", f"Paper balance reset to {real_balance}")
+        return jsonify({"success": True, "balance": real_balance})
+    except Exception as e:
+        import traceback
+        app.logger.error(f"Paper reset failed: {e}")
+        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
 
 def _ema(values, period):
@@ -486,23 +491,39 @@ def _compute_readiness(closes):
 
 @app.route("/api/signal/readiness")
 def signal_readiness():
-    pairs_raw = request.args.get("pairs", "")
-    pairs = [p.strip() for p in pairs_raw.split(",") if p.strip()]
-    if not pairs:
-        return jsonify([])
+    try:
+        pairs_raw = request.args.get("pairs", "")
+        pairs = [p.strip() for p in pairs_raw.split(",") if p.strip()]
+        if not pairs:
+            return jsonify([])
 
-    client = CoinDCXREST("", "")
-    results = []
-    for pair in pairs[:20]:
-        try:
-            candles = client.get_candles(pair, strategy.CONFIG["interval"], limit=150)
-            closes = [c.get("close") for c in candles if c.get("close") is not None]
-            readiness = _compute_readiness(closes)
-            if readiness:
-                results.append({"pair": pair, **readiness})
-        except Exception as e:
-            app.logger.warning(f"Readiness failed for {pair}: {e}")
-    return jsonify(results)
+        client = CoinDCXREST("", "")
+        results = []
+        for pair in pairs[:20]:
+            try:
+                candles = client.get_candles(pair, strategy.CONFIG["interval"], limit=150)
+                closes = [c.get("close") for c in candles if c.get("close") is not None]
+                readiness = _compute_readiness(closes)
+                if readiness:
+                    results.append({"pair": pair, **readiness})
+            except Exception as e:
+                app.logger.warning(f"Readiness failed for {pair}: {e}")
+        return jsonify(results)
+    except Exception as e:
+        import traceback
+        app.logger.error(f"Readiness endpoint failed: {e}")
+        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
+
+
+@app.errorhandler(Exception)
+def handle_api_error(error):
+    try:
+        if request.path.startswith("/api/"):
+            import traceback
+            return jsonify({"error": str(error), "traceback": traceback.format_exc()}), 500
+    except Exception:
+        pass
+    raise error
 
 
 @app.route("/api/debug/wallet")
