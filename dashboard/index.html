@@ -455,7 +455,6 @@
   </div>
 </main>
 
-let pairConfigs = {}; // Store current pair configurations
 <div class="toast" id="toast"></div>
 
 <script>
@@ -464,6 +463,7 @@ const REFRESH_MS = 5000;
 
 let equityChart, pnlChart;
 let botRunning = false;
+let pairConfigs = {}; // Store current pair configurations
 
 function showToast(msg, type = 'success') {
   const t = document.getElementById('toast');
