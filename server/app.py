@@ -198,13 +198,13 @@ def _is_not_found_payload(payload):
 def _fetch_wallet_payload(key, secret, debug=False):
     import requests, hmac, hashlib, time, json
 
+    # Correct CoinDCX Futures API endpoints for wallet/balance
     wallet_paths = (
-        "/exchange/v1/derivatives/futures/wallets",
-        "/exchange/v1/derivatives/futures/wallet",
-        "/exchange/v1/derivatives/futures/data/wallet",
-        "/exchange/v1/derivatives/futures/account",
-        "/exchange/v1/derivatives/futures/data/account",
-        "/exchange/v1/derivatives/futures/balance",
+        "/exchange/v1/derivatives/futures/data/wallet_balances",  # Primary endpoint
+        "/exchange/v1/derivatives/futures/user/wallet_balances",
+        "/exchange/v1/derivatives/futures/user/balance",
+        "/api/v1/derivatives/futures/data/wallet_balances",
+        "/exchange/v1/derivatives/futures/wallet_balances",
     )
 
     last_error = None
