@@ -455,16 +455,24 @@ def pairs_available():
         instruments = client.get_active_instruments()
         
         # Filter for futures pairs and format
+        # instruments is a list of strings like ["B-BTC_USDT", "B-ETH_USDT", ...]
         pairs = []
         for inst in instruments:
-            if isinstance(inst, dict):
+            # Handle both string format and dict format
+            if isinstance(inst, str):
+                symbol = inst
+            elif isinstance(inst, dict):
                 symbol = inst.get("symbol", inst.get("pair", ""))
-                if symbol and "USDT" in symbol:  # Focus on USDT pairs
-                    pairs.append({
-                        "pair": symbol,
-                        "base": symbol.split("_")[0] if "_" in symbol else symbol.replace("USDT", ""),
-                        "quote": "USDT"
-                    })
+            else:
+                continue
+                
+            if symbol and "USDT" in symbol:  # Focus on USDT pairs
+                base = symbol.replace("B-", "").replace("_USDT", "")
+                pairs.append({
+                    "pair": symbol,
+                    "base": base,
+                    "quote": "USDT"
+                })
         
         return jsonify(pairs)
     except Exception as e:
