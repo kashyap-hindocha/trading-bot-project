@@ -1,20 +1,14 @@
 import sys
 import os
-import threading
-import time
 sys.path.insert(0, '/home/ubuntu/trading-bot/bot')
 
 from flask import Flask, jsonify
 from flask_cors import CORS
-from flask_socketio import SocketIO, emit
 import db
 from coindcx import CoinDCXREST
 
 app = Flask(__name__)
 CORS(app)
-
-# Initialize SocketIO with CORS support
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 db.init_db()
 
