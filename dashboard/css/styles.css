@@ -518,6 +518,12 @@ tbody td {
   background: rgba(0,255,136,0.03); 
 }
 
+.coin-card.near-execute {
+  border-color: var(--accent);
+  background: linear-gradient(135deg, rgba(0,229,255,0.1), rgba(0,255,136,0.08));
+  box-shadow: 0 0 12px rgba(0,229,255,0.2);
+}
+
 .coin-toggle {
   width: 30px;
   height: 16px;
@@ -548,6 +554,11 @@ tbody td {
 .coin-info { 
   flex: 1; 
   min-width: 0; 
+}
+
+.coin-info-simple {
+  flex: 1;
+  min-width: 0;
 }
 
 .coin-name {

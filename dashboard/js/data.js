@@ -216,13 +216,17 @@ async function updateReadiness() {
   try {
     const resp = await fetch(API + '/api/signal/readiness?pairs=' + encodeURIComponent(pairsList.join(',')));
     const data = await resp.json();
+    
+    // Store readiness data globally for sorting
     data.forEach(item => {
+      pairReadiness[item.pair] = item;
+      
       const bar = document.querySelector(`[data-readiness="${item.pair}"]`);
       const val = document.querySelector(`[data-readiness-val="${item.pair}"]`);
       if (!bar || !val) return;
       const pct = Math.min(100, Math.max(0, item.readiness || 0));
       bar.style.width = pct + '%';
-      val.textContent = `${pct}% ${item.bias}`;
+      val.textContent = `${pct}%`;
     });
   } catch (e) {
     // ignore readiness errors

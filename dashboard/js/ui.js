@@ -109,9 +109,18 @@ function renderLogs(logs) {
 function renderPairs() {
   const grid = document.getElementById('coinGrid');
   const query = (document.getElementById('pairSearch')?.value || '').toUpperCase();
-  const limit = parseInt(document.getElementById('pairListLimit')?.value || '10', 10);
+  const limit = parseInt(document.getElementById('pairListLimit')?.value || '50', 10);
   
+  // Filter pairs by search query
   let filtered = allPairs.filter(p => p.pair.includes(query));
+
+  // Sort by readiness (highest/closest to 90% first)
+  filtered.sort((a, b) => {
+    const readinessA = pairReadiness[a.pair]?.readiness || 0;
+    const readinessB = pairReadiness[b.pair]?.readiness || 0;
+    return readinessB - readinessA; // Descending: highest readiness first
+  });
+
   pairsList = filtered.slice(0, limit).map(p => p.pair);
 
   if (!filtered.length) {
@@ -121,29 +130,19 @@ function renderPairs() {
 
   const pairs = filtered.slice(0, limit);
   grid.innerHTML = pairs.map(p => {
-    const cfg = pairConfigs[p.pair] || { enabled: 0, leverage: 5, quantity: 0.001 };
-    pairConfigs[p.pair] = cfg;
-
     const baseCoin = p.pair.replace('B-', '').replace('_USDT', '');
-    const enabled = cfg.enabled === 1;
+    const readiness = pairReadiness[p.pair] || { readiness: 0, bias: '—' };
+    const pct = Math.min(100, Math.max(0, readiness.readiness || 0));
+    const isNear90 = pct >= 85; // Highlight if close to 90%
 
     return `
-      <div class="coin-card ${enabled ? 'enabled' : ''}" data-pair="${p.pair}">
-        <div class="coin-toggle ${enabled ? 'on' : ''}" onclick="togglePair('${p.pair}')"></div>
-        <div class="coin-info">
+      <div class="coin-card ${isNear90 ? 'near-execute' : ''}" data-pair="${p.pair}">
+        <div class="coin-info-simple">
           <div class="coin-name">${baseCoin}/USDT</div>
-          <div class="coin-params">
-            <input type="number" class="coin-input" placeholder="Lev" 
-                   value="${cfg.leverage}" min="1" max="20" 
-                   onchange="updatePairConfig('${p.pair}', 'leverage', this.value)">
-            <input type="number" class="coin-input" placeholder="Qty" 
-                   value="${cfg.quantity}" step="0.001" min="0.001"
-                   onchange="updatePairConfig('${p.pair}', 'quantity', this.value)">
-          </div>
           <div class="readiness">
-            <span class="readiness-label">Signal</span>
-            <div class="readiness-bar"><span data-readiness="${p.pair}"></span></div>
-            <span class="readiness-val" data-readiness-val="${p.pair}">—</span>
+            <span class="readiness-label">${readiness.bias || '—'}</span>
+            <div class="readiness-bar"><span data-readiness="${p.pair}" style="width: ${pct}%"></span></div>
+            <span class="readiness-val" data-readiness-val="${p.pair}">${pct}%</span>
           </div>
         </div>
         <button class="coin-fav ${favoritePairs.has(p.pair) ? 'starred' : ''}" onclick="toggleFavorite('${p.pair}')" title="${favoritePairs.has(p.pair) ? 'Remove from favorites' : 'Add to favorites'}">★</button>

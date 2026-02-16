@@ -17,6 +17,7 @@ let allPairs = [];
 let pairConfigs = {};
 let latestTrades = [];
 let latestPaperTrades = [];
+let pairReadiness = {}; // Store readiness data for sorting
 let favoritePairs = new Set(JSON.parse(localStorage.getItem('favoritePairs') || '[]'));
 
 // Toast notification
