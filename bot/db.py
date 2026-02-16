@@ -274,7 +274,7 @@ def get_trading_mode() -> str:
     conn = get_conn()
     row = conn.execute("SELECT mode FROM trading_mode WHERE id=1").fetchone()
     conn.close()
-    return row["mode"] if row and row.get("mode") else "REAL"
+    return row["mode"] if row and row["mode"] else "REAL"
 
 
 def set_trading_mode(mode: str):
@@ -296,7 +296,7 @@ def get_paper_wallet_balance():
     conn = get_conn()
     row = conn.execute("SELECT balance FROM paper_wallet WHERE id=1").fetchone()
     conn.close()
-    return row["balance"] if row and row.get("balance") is not None else None
+    return row["balance"] if row and row["balance"] is not None else None
 
 
 def set_paper_wallet_balance(balance: float):
