@@ -86,34 +86,7 @@
     </div>
   </div>
 
-  <!-- Coin Manager -->
-  <div class="coin-manager">
-    <div class="panel-title">
-      Coin Manager — Select pairs to trade
-      <div class="panel-tools">
-        <input type="text" id="pairSearch" placeholder="Search pairs..." oninput="renderPairs()">
-        <select id="pairListLimit" onchange="renderPairs()">
-          <option value="10">Show 10</option>
-          <option value="20">Show 20</option>
-          <option value="30">Show 30</option>
-          <option value="40">Show 40</option>
-          <option value="50">Show 50</option>
-          <option value="60">Show 60</option>
-          <option value="70">Show 70</option>
-          <option value="80">Show 80</option>
-          <option value="90">Show 90</option>
-          <option value="100">Show 100</option>
-          <option value="1000">Show All</option>
-        </select>
-      </div>
-    </div>
-    <div class="coin-grid" id="coinGrid">
-      <div class="loading">Loading available pairs...</div>
-    </div>
-    <button class="apply-btn" id="applyCoinsBtn" onclick="applyPairChanges()" disabled>Apply Changes & Restart Bots</button>
-  </div>
-
-  <!-- Charts and Pairs Layout -->
+  <!-- Charts and Favorites Layout (70/30) -->
   <div class="charts-pairs-container">
     <div class="charts-section">
       <!-- Price Chart -->
@@ -147,13 +120,40 @@
       </div>
     </div>
 
-    <!-- Favorites & Pairs Panel -->
+    <!-- Favorites Panel (Right Side) -->
     <div class="pairs-section">
       <div class="chart-panel" style="flex: 1; overflow-y: auto;">
-        <div class="panel-title">Favorites & Pairs</div>
-        <div id="pairsListPanel" style="display: flex; flex-direction: column; gap: 8px;"></div>
+        <div class="panel-title">⭐ Favorites</div>
+        <div id="favoritesPanel" style="display: flex; flex-direction: column; gap: 6px; font-size: 12px;"></div>
       </div>
     </div>
+  </div>
+
+  <!-- Coin Manager — Pair Listing Below Charts -->
+  <div class="coin-manager">
+    <div class="panel-title">
+      Coin Manager — Select pairs to trade
+      <div class="panel-tools">
+        <input type="text" id="pairSearch" placeholder="Search pairs..." oninput="renderPairs()">
+        <select id="pairListLimit" onchange="renderPairs()">
+          <option value="10">Show 10</option>
+          <option value="20">Show 20</option>
+          <option value="30">Show 30</option>
+          <option value="40">Show 40</option>
+          <option value="50">Show 50</option>
+          <option value="60">Show 60</option>
+          <option value="70">Show 70</option>
+          <option value="80">Show 80</option>
+          <option value="90">Show 90</option>
+          <option value="100">Show 100</option>
+          <option value="1000">Show All</option>
+        </select>
+      </div>
+    </div>
+    <div class="coin-grid" id="coinGrid">
+      <div class="loading">Loading available pairs...</div>
+    </div>
+    <button class="apply-btn" id="applyCoinsBtn" onclick="applyPairChanges()" disabled>Apply Changes & Restart Bots</button>
   </div>
 
   <!-- Trade History Table -->

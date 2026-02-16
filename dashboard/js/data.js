@@ -156,6 +156,7 @@ async function loadPairs() {
     }
 
     renderPairs();
+    renderFavorites();
     updatePairSelect();
     document.getElementById('applyCoinsBtn').disabled = false;
     updateReadiness();

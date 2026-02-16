@@ -110,27 +110,20 @@ function renderPairs() {
   const limit = parseInt(document.getElementById('pairListLimit')?.value || '10', 10);
   
   let filtered = allPairs.filter(p => p.pair.includes(query));
-  
-  // Separate favorites and non-favorites, sort favorites first
-  const favs = filtered.filter(p => favoritePairs.has(p.pair));
-  const nonFavs = filtered.filter(p => !favoritePairs.has(p.pair));
-  const sorted = [...favs, ...nonFavs];
-  
-  const pairs = sorted.slice(0, limit);
-  pairsList = pairs.map(p => p.pair);
+  pairsList = filtered.slice(0, limit).map(p => p.pair);
 
-  if (!pairs.length) {
+  if (!filtered.length) {
     grid.innerHTML = '<div class="loading">No pairs match search</div>';
     return;
   }
 
+  const pairs = filtered.slice(0, limit);
   grid.innerHTML = pairs.map(p => {
     const cfg = pairConfigs[p.pair] || { enabled: 0, leverage: 5, quantity: 0.001 };
     pairConfigs[p.pair] = cfg;
 
     const baseCoin = p.pair.replace('B-', '').replace('_USDT', '');
     const enabled = cfg.enabled === 1;
-    const isFav = favoritePairs.has(p.pair);
 
     return `
       <div class="coin-card ${enabled ? 'enabled' : ''}" data-pair="${p.pair}">
@@ -151,12 +144,47 @@ function renderPairs() {
             <span class="readiness-val" data-readiness-val="${p.pair}">—</span>
           </div>
         </div>
-        <button class="coin-fav ${isFav ? 'starred' : ''}" onclick="toggleFavorite('${p.pair}')" title="${isFav ? 'Remove from favorites' : 'Add to favorites'}">★</button>
+        <button class="coin-fav ${favoritePairs.has(p.pair) ? 'starred' : ''}" onclick="toggleFavorite('${p.pair}')" title="${favoritePairs.has(p.pair) ? 'Remove from favorites' : 'Add to favorites'}">★</button>
       </div>
     `;
   }).join('');
 
   updateReadiness();
+  renderFavorites();
+}
+
+function renderFavorites() {
+  const panel = document.getElementById('favoritesPanel');
+  if (!panel) return;
+  
+  if (favoritePairs.size === 0) {
+    panel.innerHTML = '<div class="loading" style="padding: 10px 0; font-size: 11px;">No favorites yet</div>';
+    return;
+  }
+
+  const favList = Array.from(favoritePairs)
+    .filter(p => allPairs.some(ap => ap.pair === p))
+    .slice(0, 15);
+
+  panel.innerHTML = favList.map(pair => {
+    const cfg = pairConfigs[pair] || { enabled: 0 };
+    const baseCoin = pair.replace('B-', '').replace('_USDT', '');
+    const enabled = cfg.enabled === 1;
+    
+    return `
+      <div class="fav-item ${enabled ? 'enabled' : ''}" data-pair="${pair}">
+        <div class="fav-toggle ${enabled ? 'on' : ''}" onclick="togglePair('${pair}')"></div>
+        <div class="fav-name">${baseCoin}</div>
+        <button class="fav-remove" onclick="toggleFavorite('${pair}')" title="Remove">✕</button>
+      </div>
+    `;
+  }).join('');
+}
+
+function updateFavoritesDisplay() {
+  if (favoritePairs.size > 0) {
+    renderFavorites();
+  }
 }
 
 function updatePairSelect() {
@@ -208,6 +236,7 @@ function toggleFavorite(pair) {
   }
   localStorage.setItem('favoritePairs', JSON.stringify(Array.from(favoritePairs)));
   renderPairs();
+  renderFavorites();
 }
 
 function updatePairConfig(pair, field, value) {

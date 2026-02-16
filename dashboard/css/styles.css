@@ -574,6 +574,92 @@ tbody td {
   color: var(--text);
 }
 
+/* ── FAVORITES PANEL ── */
+.fav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  background: var(--bg3);
+  transition: all 0.2s;
+  cursor: pointer;
+}
+
+.fav-item:hover {
+  border-color: var(--accent);
+  background: rgba(0,229,255,0.05);
+}
+
+.fav-item.enabled {
+  border-color: var(--green);
+  background: rgba(0,255,136,0.08);
+}
+
+.fav-toggle {
+  width: 20px;
+  height: 12px;
+  background: var(--border);
+  border-radius: 6px;
+  position: relative;
+  cursor: pointer;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+
+.fav-toggle.on { 
+  background: var(--green); 
+}
+
+.fav-toggle::after {
+  content: '';
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  background: var(--text);
+  border-radius: 50%;
+  top: 2px;
+  left: 2px;
+  transition: transform 0.2s;
+}
+
+.fav-toggle.on::after { 
+  transform: translateX(8px); 
+}
+
+.fav-name {
+  flex: 1;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fav-remove {
+  width: 20px;
+  height: 20px;
+  border: 1px solid rgba(255,59,92,0.3);
+  border-radius: 2px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 10px;
+  transition: all 0.2s;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.fav-remove:hover {
+  border-color: var(--red);
+  color: var(--red);
+  background: rgba(255,59,92,0.1);
+}
+
 /* ── UTILS ── */
 .loading { 
   color: var(--muted); 
