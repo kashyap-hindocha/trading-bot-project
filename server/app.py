@@ -630,7 +630,7 @@ def signal_readiness():
         for pair in pairs[:20]:
             try:
                 candles = client.get_candles(pair, strategy.CONFIG["interval"], limit=150)
-                closes = [c.get("close") for c in candles if c.get("close") is not None]
+                closes = [float(c.get("c", 0)) for c in candles if c.get("c") is not None]
                 readiness = _compute_readiness(closes)
                 if readiness:
                     results.append({"pair": pair, **readiness})
