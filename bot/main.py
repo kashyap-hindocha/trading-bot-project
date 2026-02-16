@@ -169,8 +169,9 @@ def _check_paper_positions(candle: dict):
 
         db.close_paper_trade(t.get("position_id"), exit_price, net_pnl, total_fee)
         wallet_balance += net_pnl
-        logger.info(f"PAPER close {PAIR} | pnl={net_pnl:.4f} fee={total_fee:.4f}")
-        db.log_event("INFO", f"PAPER position closed {PAIR} pnl={net_pnl:.4f} fee={total_fee:.4f}")
+        position_type = "LONG" if side == "buy" else "SHORT"
+        logger.info(f"PAPER close {PAIR} {position_type} | pnl={net_pnl:.4f} fee={total_fee:.4f}")
+        db.log_event("INFO", f"PAPER position closed {PAIR} {position_type} pnl={net_pnl:.4f} fee={total_fee:.4f}")
 
     db.set_paper_wallet_balance(wallet_balance)
 
@@ -180,9 +181,10 @@ def _check_paper_positions(candle: dict):
 def _run_strategy(current_price: float):
     mode = _get_trading_mode()
 
-    # Check max open trades limit
+    # Check max open trades limit PER-PAIR (not total across all pairs)
     open_trades = db.get_open_paper_trades() if mode == "PAPER" else db.get_open_trades()
-    if len(open_trades) >= strategy.CONFIG["max_open_trades"]:
+    pair_open_trades = [t for t in open_trades if t.get("pair") == PAIR]
+    if len(pair_open_trades) >= strategy.CONFIG["max_open_trades"]:
         return
 
     result = strategy.evaluate(candle_buffer, return_confidence=True)
@@ -208,7 +210,7 @@ def _run_strategy(current_price: float):
             _run_paper_trade(current_price, signal, confidence)
             return
 
-        side       = "buy" if signal == "BUY" else "sell"
+        side       = "buy" if signal == "LONG" else "sell"
         order_type = "market_order"
         
         # Get pair-specific config from database, fallback to strategy defaults
@@ -216,12 +218,12 @@ def _run_strategy(current_price: float):
         quantity = pair_config["quantity"] if pair_config else strategy.CONFIG["quantity"]
         leverage = pair_config["leverage"] if pair_config else strategy.CONFIG["leverage"]
         
-        logger.info(f"Using config for {PAIR}: leverage={leverage}x, quantity={quantity} | Confidence: {confidence:.1f}%")
+        logger.info(f"Using config for {PAIR}: leverage={leverage}x, quantity={quantity} | Position: {signal}")
 
         # Place entry order
         order = rest.place_order(PAIR, side, order_type, quantity, leverage=leverage)
         order_id = order.get("id", "")
-        logger.info(f"Entry order placed: {order_id} | Auto-execute: {auto_execute}")
+        logger.info(f"Entry order placed: {order_id} | {signal} position | Auto-execute: {auto_execute}")
 
         # Small delay to let position register
         time.sleep(1)
@@ -240,7 +242,7 @@ def _run_strategy(current_price: float):
         # Place TP/SL
         if position_id:
             rest.place_tp_sl(PAIR, position_id, tp_price, sl_price)
-            logger.info(f"TP={tp_price} SL={sl_price} set for position {position_id}")
+            logger.info(f"TP={tp_price} SL={sl_price} set for {signal} position {position_id}")
 
         # Save to DB
         db.insert_trade(
@@ -262,7 +264,7 @@ def _run_strategy(current_price: float):
 
 
 def _run_paper_trade(current_price: float, signal: str, confidence: float = 0.0):
-    side = "buy" if signal == "BUY" else "sell"
+    side = "buy" if signal == "LONG" else "sell"
     pair_config = _get_pair_config()
     quantity = pair_config["quantity"] if pair_config else strategy.CONFIG["quantity"]
     leverage = pair_config["leverage"] if pair_config else strategy.CONFIG["leverage"]
@@ -302,8 +304,8 @@ def _run_paper_trade(current_price: float, signal: str, confidence: float = 0.0)
         strategy_note=f"EMA crossover signal {signal} | Confidence: {confidence:.1f}%",
     )
 
-    logger.info(f"PAPER entry {PAIR} | side={side} qty={quantity} lev={leverage} fee={entry_fee:.4f} | Confidence: {confidence:.1f}%")
-    db.log_event("INFO", f"PAPER entry {PAIR} side={side} qty={quantity} lev={leverage} | Confidence: {confidence:.1f}%")
+    logger.info(f"PAPER entry {PAIR} | {signal} qty={quantity} lev={leverage} fee={entry_fee:.4f} | Confidence: {confidence:.1f}%")
+    db.log_event("INFO", f"PAPER entry {PAIR} {signal} qty={quantity} lev={leverage} | Confidence: {confidence:.1f}%")
 
 
 # ─────────────────────────────────────────────

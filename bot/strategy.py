@@ -93,7 +93,7 @@ def compute_indicators(candles: list[dict]) -> dict:
     }
 
 
-def calculate_confidence(ind: dict, side: str) -> float:
+def calculate_confidence(ind: dict, position_type: str) -> float:
     """
     Calculate strategy confidence (0-100%) based on indicator alignment.
     
@@ -101,6 +101,9 @@ def calculate_confidence(ind: dict, side: str) -> float:
     - EMA crossover (40% weight)
     - RSI alignment (40% weight)
     - Trend strength - EMA separation (20% weight)
+    
+    Args:
+        position_type: "LONG" or "SHORT"
     """
     confidence = 0.0
     
@@ -112,28 +115,28 @@ def calculate_confidence(ind: dict, side: str) -> float:
     ema_separation = abs(ind["ema_slow_series"][-1] - ind["ema_fast_series"][-1]) if len(ind.get("ema_slow_series", [])) > 0 else 0.01
     crossover_proximity = max(0, 1 - (ema_diff / max(ema_separation, 0.01)))
     
-    if side == "BUY":
-        # Fresh BUY crossover = higher confidence
+    if position_type == "LONG":
+        # Fresh LONG crossover = higher confidence
         crossed_up = (ind["ema_fast_prev"] <= ind["ema_slow_prev"] and
                       ind["ema_fast"] > ind["ema_slow"])
         confidence += 40 if crossed_up else (crossover_proximity * 40)
     else:
-        # Fresh SELL crossover = higher confidence
+        # Fresh SHORT crossover = higher confidence
         crossed_down = (ind["ema_fast_prev"] >= ind["ema_slow_prev"] and
                         ind["ema_fast"] < ind["ema_slow"])
         confidence += 40 if crossed_down else (crossover_proximity * 40)
     
     # 2. RSI Alignment (40% weight)
     rsi = ind["rsi"]
-    if side == "BUY":
-        # BUY: RSI should be below overbought, ideally in oversold
+    if position_type == "LONG":
+        # LONG: RSI should be below overbought, ideally in oversold
         if rsi < CONFIG["rsi_oversold"]:
             confidence += 40  # Ideal oversold condition
         elif rsi < CONFIG["rsi_overbought"]:
             rsi_alignment = (CONFIG["rsi_overbought"] - rsi) / CONFIG["rsi_overbought"]
             confidence += 40 * rsi_alignment
     else:
-        # SELL: RSI should be above oversold, ideally in overbought
+        # SHORT: RSI should be above oversold, ideally in overbought
         if rsi > CONFIG["rsi_overbought"]:
             confidence += 40  # Ideal overbought condition
         elif rsi > CONFIG["rsi_oversold"]:
@@ -195,16 +198,16 @@ def evaluate(candles: list[dict], return_confidence: bool = True) -> str | None 
     auto_execute = False
 
     if crossed_up and ind["rsi"] < CONFIG["rsi_overbought"]:
-        signal = "BUY"
-        confidence = calculate_confidence(ind, "BUY")
+        signal = "LONG"
+        confidence = calculate_confidence(ind, "LONG")
         auto_execute = CONFIG["auto_execute"] and confidence >= CONFIG["confidence_threshold"]
-        logger.info(f"BUY signal | EMA fast={ind['ema_fast']:.2f} slow={ind['ema_slow']:.2f} RSI={ind['rsi']} | Confidence: {confidence:.1f}% | Auto-execute: {auto_execute}")
+        logger.info(f"LONG signal | EMA fast={ind['ema_fast']:.2f} slow={ind['ema_slow']:.2f} RSI={ind['rsi']} | Confidence: {confidence:.1f}% | Auto-execute: {auto_execute}")
 
     if crossed_down and ind["rsi"] > CONFIG["rsi_oversold"]:
-        signal = "SELL"
-        confidence = calculate_confidence(ind, "SELL")
+        signal = "SHORT"
+        confidence = calculate_confidence(ind, "SHORT")
         auto_execute = CONFIG["auto_execute"] and confidence >= CONFIG["confidence_threshold"]
-        logger.info(f"SELL signal | EMA fast={ind['ema_fast']:.2f} slow={ind['ema_slow']:.2f} RSI={ind['rsi']} | Confidence: {confidence:.1f}% | Auto-execute: {auto_execute}")
+        logger.info(f"SHORT signal | EMA fast={ind['ema_fast']:.2f} slow={ind['ema_slow']:.2f} RSI={ind['rsi']} | Confidence: {confidence:.1f}% | Auto-execute: {auto_execute}")
 
     if return_confidence:
         return {"signal": signal, "confidence": confidence, "auto_execute": auto_execute}
@@ -214,11 +217,15 @@ def evaluate(candles: list[dict], return_confidence: bool = True) -> str | None 
 # ─────────────────────────────────────────────
 #  TP / SL price calculation
 # ─────────────────────────────────────────────
-def calculate_tp_sl(entry_price: float, side: str) -> tuple[float, float]:
-    """Returns (tp_price, sl_price) based on CONFIG percentages."""
+def calculate_tp_sl(entry_price: float, position_type: str) -> tuple[float, float]:
+    """Returns (tp_price, sl_price) based on CONFIG percentages.
+    
+    Args:
+        position_type: "LONG" or "SHORT"
+    """
     tp_pct = CONFIG["tp_pct"]
     sl_pct = CONFIG["sl_pct"]
-    if side == "BUY":
+    if position_type == "LONG":
         tp = round(entry_price * (1 + tp_pct), 4)
         sl = round(entry_price * (1 - sl_pct), 4)
     else:

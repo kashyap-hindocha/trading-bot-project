@@ -305,9 +305,10 @@ function renderOpenTradesTabs() {
   
   container.innerHTML = openTrades.map(trade => {
     const isActive = selectedOpenTrade && selectedOpenTrade.position_id === trade.position_id;
+    const posType = trade.side === 'buy' ? 'LONG' : 'SHORT';
     return `
       <button class="trade-tab ${isActive ? 'active' : ''}" data-trade-id="${trade.position_id}" onclick="switchOpenTrade(this.parentNode.parentNode.parentNode.querySelector('[data-trade-obj]'))" title="${trade.pair}">
-        <span style="color: ${trade.side === 'buy' ? 'var(--green)' : 'var(--red)'};">${trade.side.toUpperCase()[0]}</span>
+        <span style="color: ${trade.side === 'buy' ? 'var(--green)' : 'var(--red)'};">${posType}</span>
         ${trade.pair.replace('B-', '').replace('_USDT', '')}
       </button>
     `;
@@ -328,6 +329,7 @@ function renderOpenTradeDetail(trade) {
     return;
   }
   
+  const posType = trade.side === 'buy' ? 'LONG' : 'SHORT';
   const pnlColor = trade.pnl > 0 ? 'positive' : trade.pnl < 0 ? 'negative' : '';
   const pnlText = trade.pnl !== undefined ? (trade.pnl > 0 ? '+' : '') + parseFloat(trade.pnl).toFixed(4) : '—';
   
@@ -338,8 +340,8 @@ function renderOpenTradeDetail(trade) {
         <div class="trade-detail-value">${trade.pair}</div>
       </div>
       <div class="trade-detail-item">
-        <div class="trade-detail-label">Side</div>
-        <div class="trade-detail-value" style="color: ${trade.side === 'buy' ? 'var(--green)' : 'var(--red)'};">${trade.side.toUpperCase()}</div>
+        <div class="trade-detail-label">Position</div>
+        <div class="trade-detail-value" style="color: ${trade.side === 'buy' ? 'var(--green)' : 'var(--red)'};">${posType}</div>
       </div>
       <div class="trade-detail-item">
         <div class="trade-detail-label">Entry Price</div>

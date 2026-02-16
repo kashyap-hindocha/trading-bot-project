@@ -45,9 +45,10 @@ function renderTrades(trades) {
     const pnl    = t.pnl != null ? parseFloat(t.pnl).toFixed(4) : '—';
     const pnlCls = t.pnl > 0 ? 'pnl-pos' : t.pnl < 0 ? 'pnl-neg' : '';
     const opened = t.opened_at ? t.opened_at.slice(0, 16).replace('T', ' ') : '—';
+    const posType = t.side === 'buy' ? 'LONG' : 'SHORT';
     return `<tr>
       <td>${t.pair}</td>
-      <td><span class="badge ${t.side}">${t.side.toUpperCase()}</span></td>
+      <td><span class="badge ${t.side}">${posType}</span></td>
       <td>${t.entry_price ?? '—'}</td>
       <td>${t.exit_price ?? '—'}</td>
       <td>${t.tp_price ?? '—'}</td>
@@ -71,9 +72,10 @@ function renderPaperTrades(trades) {
     const pnl    = t.pnl != null ? parseFloat(t.pnl).toFixed(4) : '—';
     const pnlCls = t.pnl > 0 ? 'pnl-pos' : t.pnl < 0 ? 'pnl-neg' : '';
     const opened = t.opened_at ? t.opened_at.slice(0, 16).replace('T', ' ') : '—';
+    const posType = t.side === 'buy' ? 'LONG' : 'SHORT';
     return `<tr>
       <td>${t.pair}</td>
-      <td><span class="badge ${t.side}">${t.side.toUpperCase()}</span></td>
+      <td><span class="badge ${t.side}">${posType}</span></td>
       <td>${t.entry_price ?? '—'}</td>
       <td>${t.exit_price ?? '—'}</td>
       <td>${t.tp_price ?? '—'}</td>
@@ -158,7 +160,7 @@ function renderFavorites() {
   if (!panel) return;
   
   if (favoritePairs.size === 0) {
-    panel.innerHTML = '<div class="loading" style="padding: 10px 0; font-size: 11px;">No favorites yet</div>';
+    panel.innerHTML = '<div class="loading" style="padding: 10px 0; font-size: 11px;">Add favorites to watch</div>';
     return;
   }
 
@@ -167,13 +169,10 @@ function renderFavorites() {
     .slice(0, 15);
 
   panel.innerHTML = favList.map(pair => {
-    const cfg = pairConfigs[pair] || { enabled: 0 };
     const baseCoin = pair.replace('B-', '').replace('_USDT', '');
-    const enabled = cfg.enabled === 1;
     
     return `
-      <div class="fav-item ${enabled ? 'enabled' : ''}" data-pair="${pair}">
-        <div class="fav-toggle ${enabled ? 'on' : ''}" onclick="togglePair('${pair}')"></div>
+      <div class="fav-item" data-pair="${pair}">
         <div class="fav-name">${baseCoin}</div>
         <button class="fav-remove" onclick="toggleFavorite('${pair}')" title="Remove">✕</button>
       </div>

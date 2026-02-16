@@ -124,9 +124,9 @@
       <!-- Price Chart -->
       <div class="chart-panel wide">
         <div class="panel-title">
-          Live Price — Selected Pair
+          Live Price — All Pairs Auto-Trading
           <div class="panel-tools">
-            <select id="pairSelect" onchange="onPairChange()"></select>
+            <select id="pairSelect" onchange="onPairChange()" style="display: none;"></select>
           </div>
         </div>
         <div class="chart-wrap"><canvas id="priceChart"></canvas></div>
@@ -161,10 +161,10 @@
     </div>
   </div>
 
-  <!-- Coin Manager — Pair Listing Below Charts -->
-  <div class="coin-manager">
+  <!-- Coin Manager — Pair Listing Below Charts (Hidden in fully automatic mode) -->
+  <div class="coin-manager" style="display: none;">
     <div class="panel-title">
-      Coin Manager — Select pairs to trade
+      Coin Manager — All pairs trade automatically
       <div class="panel-tools">
         <input type="text" id="pairSearch" placeholder="Search pairs..." oninput="renderPairs()">
         <select id="pairListLimit" onchange="renderPairs()">
