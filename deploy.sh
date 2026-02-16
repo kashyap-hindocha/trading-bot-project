@@ -12,6 +12,10 @@ cd ~/trading-bot
 # Store current commit
 OLD_COMMIT=$(git rev-parse HEAD)
 
+# Stash any local changes
+echo "Stashing local changes..."
+git stash
+
 # Pull latest changes
 echo "Pulling latest changes from GitHub..."
 git pull origin main

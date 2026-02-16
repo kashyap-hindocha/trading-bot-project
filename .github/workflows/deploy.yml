@@ -22,7 +22,15 @@ jobs:
           port: ${{ secrets.SERVER_PORT || 22 }}
           script: |
             cd ~/trading-bot
+            
+            # Stash any local changes before pulling
+            git stash
+            
+            # Pull latest changes from GitHub
             git pull origin main
+            
+            # Reapply stashed changes if any (optional - commented out for safety)
+            # git stash pop
             
             # Install/update Python dependencies if requirements.txt changed
             if git diff HEAD@{1} HEAD --name-only | grep -q "requirements.txt"; then
