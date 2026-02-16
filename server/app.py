@@ -90,7 +90,8 @@ def _extract_balance_with_currency(payload):
     def walk(node, inherited_currency=None):
         if isinstance(node, dict):
             currency = (
-                node.get("currency")
+                node.get("currency_short_name")  # CoinDCX futures uses this
+                or node.get("currency")
                 or node.get("asset")
                 or node.get("asset_name")
                 or node.get("assetName")
@@ -291,27 +292,55 @@ def status():
 
 @app.route("/api/positions")
 def positions():
-    return jsonify(db.get_open_trades())
+    try:
+        return jsonify(db.get_open_trades())
+    except Exception as e:
+        app.logger.error(f"Error fetching positions: {e}")
+        return jsonify([])
 
 
 @app.route("/api/trades")
 def trades():
-    return jsonify(db.get_all_trades(limit=100))
+    try:
+        return jsonify(db.get_all_trades(limit=100))
+    except Exception as e:
+        app.logger.error(f"Error fetching trades: {e}")
+        return jsonify([])
 
 
 @app.route("/api/stats")
 def stats():
-    return jsonify(db.get_trade_stats())
+    try:
+        return jsonify(db.get_trade_stats())
+    except Exception as e:
+        app.logger.error(f"Error fetching stats: {e}")
+        return jsonify({
+            "total_trades": 0,
+            "winning_trades": 0,
+            "losing_trades": 0,
+            "total_pnl": 0.0,
+            "win_rate": 0.0,
+            "avg_win": 0.0,
+            "avg_loss": 0.0
+        })
 
 
 @app.route("/api/equity")
 def equity():
-    return jsonify(db.get_equity_history(limit=200))
+    try:
+        return jsonify(db.get_equity_history(limit=200))
+    except Exception as e:
+        app.logger.error(f"Error fetching equity: {e}")
+        return jsonify([])
 
 
 @app.route("/api/logs")
 def logs():
-    return jsonify(db.get_recent_logs(limit=50))
+    try:
+        return jsonify(db.get_recent_logs(limit=50))
+    except Exception as e:
+        app.logger.error(f"Error fetching logs: {e}")
+        return jsonify([])
 
 
 @app.route("/api/debug/wallet")
