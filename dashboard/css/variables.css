@@ -1,0 +1,48 @@
+/* ════════════════════════════════════════════════════════════════
+   ALGO DESK — UI VARIABLES & COLOR SCHEME
+   ════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* Base Colors */
+  --bg:       #080b0f;
+  --bg2:      #0d1117;
+  --bg3:      #131920;
+  --border:   #1e2a35;
+  
+  /* Accent Colors */
+  --accent:   #00e5ff;   /* Cyan */
+  --accent-dark: #0099bb;
+  --accent-light: #33f0ff;
+  
+  /* Status Colors */
+  --green:    #00ff88;
+  --green-dark: #00cc6a;
+  --red:      #ff3b5c;
+  --red-dark: #cc2e48;
+  --yellow:   #ffd230;
+  --yellow-dark: #ccaa24;
+  
+  /* Text Colors */
+  --text:     #c8d8e8;
+  --text-light: #e0e8f0;
+  --muted:    #4a6070;
+  --muted-light: #6a8099;
+  
+  /* Glow & Shadow Effects */
+  --glow:     rgba(0,229,255,0.12);
+  --glow-bright: rgba(0,229,255,0.25);
+  --glow2:    rgba(0,255,136,0.10);
+  --glow2-bright: rgba(0,255,136,0.18);
+  --glow-yellow: rgba(255,210,48,0.15);
+  --shadow:   rgba(0,0,0,0.45);
+  --shadow-deep: rgba(0,0,0,0.65);
+  
+  /* Font Families */
+  --font-mono: 'Space Mono', monospace;
+  --font-head: 'Syne', sans-serif;
+  
+  /* Gradients */
+  --gradient-accent: linear-gradient(135deg, rgba(0,229,255,0.2), rgba(0,255,136,0.1));
+  --gradient-warm: linear-gradient(135deg, rgba(255,210,48,0.15), rgba(255,59,92,0.1));
+  --gradient-cool: linear-gradient(135deg, rgba(0,229,255,0.18), rgba(0,255,136,0.12));
+}
