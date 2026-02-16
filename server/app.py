@@ -385,6 +385,66 @@ def paper_trades():
         return jsonify([])
 
 
+@app.route("/api/trades/open")
+def open_trades():
+    """Get all currently open trades with details for multi-trade view"""
+    try:
+        trades = db.get_open_trades()
+        if not trades:
+            return jsonify([])
+        
+        # Enhance with pair info and confidence details
+        enhanced = []
+        for trade in trades:
+            enhanced.append({
+                "id": trade.get("id"),
+                "position_id": trade.get("position_id"),
+                "pair": trade.get("pair"),
+                "side": trade.get("side"),
+                "entry_price": trade.get("entry_price"),
+                "quantity": trade.get("quantity"),
+                "leverage": trade.get("leverage"),
+                "tp_price": trade.get("tp_price"),
+                "sl_price": trade.get("sl_price"),
+                "opened_at": trade.get("opened_at"),
+                "status": trade.get("status", "open"),
+            })
+        return jsonify(enhanced)
+    except Exception as e:
+        app.logger.error(f"Error fetching open trades: {e}")
+        return jsonify([])
+
+
+@app.route("/api/paper/trades/open")
+def open_paper_trades():
+    """Get all currently open paper trades with details for multi-trade view"""
+    try:
+        trades = db.get_open_paper_trades()
+        if not trades:
+            return jsonify([])
+        
+        # Enhance with pair info and confidence details
+        enhanced = []
+        for trade in trades:
+            enhanced.append({
+                "id": trade.get("id"),
+                "position_id": trade.get("position_id"),
+                "pair": trade.get("pair"),
+                "side": trade.get("side"),
+                "entry_price": trade.get("entry_price"),
+                "quantity": trade.get("quantity"),
+                "leverage": trade.get("leverage"),
+                "tp_price": trade.get("tp_price"),
+                "sl_price": trade.get("sl_price"),
+                "opened_at": trade.get("opened_at"),
+                "status": trade.get("status", "open"),
+            })
+        return jsonify(enhanced)
+    except Exception as e:
+        app.logger.error(f"Error fetching open paper trades: {e}")
+        return jsonify([])
+
+
 @app.route("/api/mode", methods=["GET", "POST"])
 def trading_mode():
     if request.method == "GET":

@@ -812,6 +812,82 @@ tbody td {
   .chart-wrap { height: 180px; }
 }
 
+/* ── OPEN TRADES MULTI-VIEW ── */
+.open-trades-section {
+  margin: 28px 0;
+  padding: 0;
+}
+
+.open-trades-tabs-container {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.trade-tab {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  background: rgba(19,25,32,0.6);
+  border-radius: 2px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 500;
+  transition: all 0.2s ease;
+  color: var(--gray-2);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.trade-tab:hover {
+  background: rgba(19,25,32,0.9);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.trade-tab.active {
+  background: linear-gradient(135deg, rgba(0,229,255,0.2), rgba(0,255,136,0.2));
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 0 12px rgba(0,229,255,0.25);
+}
+
+.trade-details-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.trade-detail-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.trade-detail-label {
+  font-size: 10px;
+  color: var(--gray-2);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+}
+
+.trade-detail-value {
+  font-size: 13px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  word-break: break-all;
+}
+
+.trade-detail-value.positive {
+  color: var(--green);
+}
+
+.trade-detail-value.negative {
+  color: var(--red);
+}
+
 @media (max-width: 600px) {
   .logo { font-size: 16px; letter-spacing: 0.12em; }
   .card-value { font-size: 22px; }

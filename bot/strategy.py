@@ -30,7 +30,9 @@ CONFIG = {
     "quantity":      0.001,          # Order size in base currency (BTC)
     "tp_pct":        0.015,          # Take profit %  (1.5%)
     "sl_pct":        0.008,          # Stop loss %    (0.8%)
-    "max_open_trades": 1,            # Max simultaneous open positions
+    "max_open_trades": 5,            # Max simultaneous open positions
+    "auto_execute":  True,           # Auto-execute trades above confidence threshold
+    "confidence_threshold": 90.0,    # Confidence threshold for auto-execute (0-100%)
 
     # ── Add your indicator params below ──────
     "ema_fast":      9,
@@ -150,7 +152,7 @@ def calculate_confidence(ind: dict, side: str) -> float:
 # ─────────────────────────────────────────────
 #  SIGNAL LOGIC — edit this function
 # ─────────────────────────────────────────────
-def evaluate(candles: list[dict], return_confidence: bool = False) -> str | None | dict:
+def evaluate(candles: list[dict], return_confidence: bool = True) -> str | None | dict:
     """
     Main entry point called by the bot on every new candle.
 
@@ -161,15 +163,16 @@ def evaluate(candles: list[dict], return_confidence: bool = False) -> str | None
 
     Args:
         candles: List of candle dicts with OHLCV data
-        return_confidence: If True, returns {"signal": str, "confidence": float}
+        return_confidence: If True, returns {"signal": str, "confidence": float} (default: True)
                           If False, returns just signal string (backward compatible)
 
     Returns:
-        str or dict: "BUY"/"SELL"/None or {"signal": ..., "confidence": ...}
+        dict: {"signal": str, "confidence": float, "auto_execute": bool}
+        or str: "BUY"/"SELL"/None (if return_confidence=False)
     """
     if len(candles) < CONFIG["ema_slow"] + 5:
         if return_confidence:
-            return {"signal": None, "confidence": 0.0}
+            return {"signal": None, "confidence": 0.0, "auto_execute": False}
         return None
 
     ind = compute_indicators(candles)
@@ -177,7 +180,7 @@ def evaluate(candles: list[dict], return_confidence: bool = False) -> str | None
     if None in (ind["ema_fast"], ind["ema_slow"],
                 ind["ema_fast_prev"], ind["ema_slow_prev"]):
         if return_confidence:
-            return {"signal": None, "confidence": 0.0}
+            return {"signal": None, "confidence": 0.0, "auto_execute": False}
         return None
 
     # EMA crossover detection
@@ -189,19 +192,22 @@ def evaluate(candles: list[dict], return_confidence: bool = False) -> str | None
 
     signal = None
     confidence = 0.0
+    auto_execute = False
 
     if crossed_up and ind["rsi"] < CONFIG["rsi_overbought"]:
         signal = "BUY"
         confidence = calculate_confidence(ind, "BUY")
-        logger.info(f"BUY signal | EMA fast={ind['ema_fast']:.2f} slow={ind['ema_slow']:.2f} RSI={ind['rsi']} | Confidence: {confidence:.1f}%")
+        auto_execute = CONFIG["auto_execute"] and confidence >= CONFIG["confidence_threshold"]
+        logger.info(f"BUY signal | EMA fast={ind['ema_fast']:.2f} slow={ind['ema_slow']:.2f} RSI={ind['rsi']} | Confidence: {confidence:.1f}% | Auto-execute: {auto_execute}")
 
     if crossed_down and ind["rsi"] > CONFIG["rsi_oversold"]:
         signal = "SELL"
         confidence = calculate_confidence(ind, "SELL")
-        logger.info(f"SELL signal | EMA fast={ind['ema_fast']:.2f} slow={ind['ema_slow']:.2f} RSI={ind['rsi']} | Confidence: {confidence:.1f}%")
+        auto_execute = CONFIG["auto_execute"] and confidence >= CONFIG["confidence_threshold"]
+        logger.info(f"SELL signal | EMA fast={ind['ema_fast']:.2f} slow={ind['ema_slow']:.2f} RSI={ind['rsi']} | Confidence: {confidence:.1f}% | Auto-execute: {auto_execute}")
 
     if return_confidence:
-        return {"signal": signal, "confidence": confidence}
+        return {"signal": signal, "confidence": confidence, "auto_execute": auto_execute}
     return signal
 
 

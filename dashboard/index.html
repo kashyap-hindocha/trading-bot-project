@@ -99,6 +99,25 @@
     </div>
   </div>
 
+  <!-- Open Trades Multi-View Section -->
+  <div class="open-trades-section" style="display: none;">
+    <div class="panel-title">
+      🔄 Open Positions
+      <div class="panel-tools">
+        <select id="openTradesModeSelect" onchange="switchTradeMode()">
+          <option value="real">Real Trades</option>
+          <option value="paper">Paper Trades</option>
+        </select>
+      </div>
+    </div>
+    <div class="open-trades-tabs-container">
+      <div id="openTradesTabs" style="display: flex; gap: 8px; margin-bottom: 12px; border-bottom: 1px solid var(--gray-3); padding-bottom: 8px; overflow-x: auto;"></div>
+    </div>
+    <div id="openTradesDetail" class="chart-panel" style="min-height: 200px; padding: 16px;">
+      <div style="color: var(--gray-2); text-align: center; padding: 20px;">Select a trade to view details</div>
+    </div>
+  </div>
+
   <!-- Charts and Favorites Layout (70/30) -->
   <div class="charts-pairs-container">
     <div class="charts-section">

@@ -185,16 +185,27 @@ def _run_strategy(current_price: float):
     if len(open_trades) >= strategy.CONFIG["max_open_trades"]:
         return
 
-    signal = strategy.evaluate(candle_buffer)
+    result = strategy.evaluate(candle_buffer, return_confidence=True)
+    
+    # Handle both old format (string) and new format (dict)
+    if isinstance(result, dict):
+        signal = result.get("signal")
+        confidence = result.get("confidence", 0.0)
+        auto_execute = result.get("auto_execute", False)
+    else:
+        signal = result
+        confidence = 0.0
+        auto_execute = False
+    
     if not signal:
         return
 
-    logger.info(f"Signal: {signal} at price {current_price}")
-    db.log_event("INFO", f"Signal {signal} at {current_price} for {PAIR}")
+    logger.info(f"Signal: {signal} at price {current_price} | Confidence: {confidence:.1f}% | Auto-execute: {auto_execute}")
+    db.log_event("INFO", f"Signal {signal} at {current_price} for {PAIR} | Confidence: {confidence:.1f}%")
 
     try:
         if mode == "PAPER":
-            _run_paper_trade(current_price, signal)
+            _run_paper_trade(current_price, signal, confidence)
             return
 
         side       = "buy" if signal == "BUY" else "sell"
@@ -205,12 +216,12 @@ def _run_strategy(current_price: float):
         quantity = pair_config["quantity"] if pair_config else strategy.CONFIG["quantity"]
         leverage = pair_config["leverage"] if pair_config else strategy.CONFIG["leverage"]
         
-        logger.info(f"Using config for {PAIR}: leverage={leverage}x, quantity={quantity}")
+        logger.info(f"Using config for {PAIR}: leverage={leverage}x, quantity={quantity} | Confidence: {confidence:.1f}%")
 
         # Place entry order
         order = rest.place_order(PAIR, side, order_type, quantity, leverage=leverage)
         order_id = order.get("id", "")
-        logger.info(f"Entry order placed: {order_id}")
+        logger.info(f"Entry order placed: {order_id} | Auto-execute: {auto_execute}")
 
         # Small delay to let position register
         time.sleep(1)
@@ -242,7 +253,7 @@ def _run_strategy(current_price: float):
             sl_price=sl_price,
             order_id=order_id,
             position_id=position_id,
-            strategy_note=f"EMA crossover signal {signal}",
+            strategy_note=f"EMA crossover signal {signal} | Confidence: {confidence:.1f}% | Auto-execute: {auto_execute}",
         )
 
     except Exception as e:
@@ -250,7 +261,7 @@ def _run_strategy(current_price: float):
         db.log_event("ERROR", f"Order execution failed: {e}")
 
 
-def _run_paper_trade(current_price: float, signal: str):
+def _run_paper_trade(current_price: float, signal: str, confidence: float = 0.0):
     side = "buy" if signal == "BUY" else "sell"
     pair_config = _get_pair_config()
     quantity = pair_config["quantity"] if pair_config else strategy.CONFIG["quantity"]
@@ -288,11 +299,11 @@ def _run_paper_trade(current_price: float, signal: str):
         fee_paid=entry_fee,
         order_id=order_id,
         position_id=position_id,
-        strategy_note=f"EMA crossover signal {signal}",
+        strategy_note=f"EMA crossover signal {signal} | Confidence: {confidence:.1f}%",
     )
 
-    logger.info(f"PAPER entry {PAIR} | side={side} qty={quantity} lev={leverage} fee={entry_fee:.4f}")
-    db.log_event("INFO", f"PAPER entry {PAIR} side={side} qty={quantity} lev={leverage}")
+    logger.info(f"PAPER entry {PAIR} | side={side} qty={quantity} lev={leverage} fee={entry_fee:.4f} | Confidence: {confidence:.1f}%")
+    db.log_event("INFO", f"PAPER entry {PAIR} side={side} qty={quantity} lev={leverage} | Confidence: {confidence:.1f}%")
 
 
 # ─────────────────────────────────────────────

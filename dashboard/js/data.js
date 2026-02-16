@@ -134,6 +134,9 @@ async function fetchAll() {
     renderPaperTrades(paperTrades);
     renderActivePairs();
     updatePairPnlChart();
+    
+    // Fetch and display open trades
+    await fetchOpenTrades();
 
     document.getElementById('lastUpdate').textContent = 'Updated ' + new Date().toLocaleTimeString();
   } catch (e) {
@@ -239,4 +242,137 @@ async function resetPaperBalance() {
   } catch (e) {
     showToast('Failed to reset paper balance', 'error');
   }
+}
+// ── Open Trades Multi-View ──
+let openTradesMode = 'real'; // 'real' or 'paper'
+let openTrades = [];
+let selectedOpenTrade = null;
+
+async function fetchOpenTrades() {
+  try {
+    const endpoint = openTradesMode === 'real' ? '/api/trades/open' : '/api/paper/trades/open';
+    const resp = await fetch(API + endpoint);
+    const data = await resp.json();
+    openTrades = data || [];
+    
+    renderOpenTradesTabs();
+    
+    // Show/hide section based on whether there are open trades
+    const section = document.querySelector('.open-trades-section');
+    if (section) {
+      section.style.display = openTrades.length > 0 ? 'block' : 'none';
+    }
+    
+    // Auto-select first trade if none selected
+    if (openTrades.length > 0 && !selectedOpenTrade) {
+      switchOpenTrade(openTrades[0]);
+    }
+  } catch (e) {
+    console.error('Error fetching open trades:', e);
+  }
+}
+
+function switchTradeMode() {
+  const select = document.getElementById('openTradesModeSelect');
+  if (select) {
+    openTradesMode = select.value;
+    selectedOpenTrade = null;
+    fetchOpenTrades();
+  }
+}
+
+function switchOpenTrade(trade) {
+  selectedOpenTrade = trade;
+  renderOpenTradeDetail(trade);
+  
+  // Update active tab styling
+  document.querySelectorAll('.trade-tab').forEach(tab => {
+    tab.classList.remove('active');
+    if (tab.dataset.tradeId === String(trade.position_id)) {
+      tab.classList.add('active');
+    }
+  });
+}
+
+function renderOpenTradesTabs() {
+  const container = document.getElementById('openTradesTabs');
+  if (!container) return;
+  
+  if (openTrades.length === 0) {
+    container.innerHTML = '<div style="color: var(--gray-2); font-size: 11px;">No open trades</div>';
+    return;
+  }
+  
+  container.innerHTML = openTrades.map(trade => {
+    const isActive = selectedOpenTrade && selectedOpenTrade.position_id === trade.position_id;
+    return `
+      <button class="trade-tab ${isActive ? 'active' : ''}" data-trade-id="${trade.position_id}" onclick="switchOpenTrade(this.parentNode.parentNode.parentNode.querySelector('[data-trade-obj]'))" title="${trade.pair}">
+        <span style="color: ${trade.side === 'buy' ? 'var(--green)' : 'var(--red)'};">${trade.side.toUpperCase()[0]}</span>
+        ${trade.pair.replace('B-', '').replace('_USDT', '')}
+      </button>
+    `;
+  }).join('');
+  
+  // Re-bind click handlers properly
+  document.querySelectorAll('.trade-tab').forEach((tab, index) => {
+    tab.onclick = () => switchOpenTrade(openTrades[index]);
+  });
+}
+
+function renderOpenTradeDetail(trade) {
+  const container = document.getElementById('openTradesDetail');
+  if (!container) return;
+  
+  if (!trade) {
+    container.innerHTML = '<div style="color: var(--gray-2); text-align: center; padding: 20px;">Select a trade to view details</div>';
+    return;
+  }
+  
+  const pnlColor = trade.pnl > 0 ? 'positive' : trade.pnl < 0 ? 'negative' : '';
+  const pnlText = trade.pnl !== undefined ? (trade.pnl > 0 ? '+' : '') + parseFloat(trade.pnl).toFixed(4) : '—';
+  
+  container.innerHTML = `
+    <div class="trade-details-grid">
+      <div class="trade-detail-item">
+        <div class="trade-detail-label">Pair</div>
+        <div class="trade-detail-value">${trade.pair}</div>
+      </div>
+      <div class="trade-detail-item">
+        <div class="trade-detail-label">Side</div>
+        <div class="trade-detail-value" style="color: ${trade.side === 'buy' ? 'var(--green)' : 'var(--red)'};">${trade.side.toUpperCase()}</div>
+      </div>
+      <div class="trade-detail-item">
+        <div class="trade-detail-label">Entry Price</div>
+        <div class="trade-detail-value">${parseFloat(trade.entry_price).toFixed(2)}</div>
+      </div>
+      <div class="trade-detail-item">
+        <div class="trade-detail-label">Quantity</div>
+        <div class="trade-detail-value">${parseFloat(trade.quantity).toFixed(4)}</div>
+      </div>
+      <div class="trade-detail-item">
+        <div class="trade-detail-label">Leverage</div>
+        <div class="trade-detail-value">${trade.leverage}x</div>
+      </div>
+      <div class="trade-detail-item">
+        <div class="trade-detail-label">TP Price</div>
+        <div class="trade-detail-value" style="color: var(--green);">${parseFloat(trade.tp_price).toFixed(2)}</div>
+      </div>
+      <div class="trade-detail-item">
+        <div class="trade-detail-label">SL Price</div>
+        <div class="trade-detail-value" style="color: var(--red);">${parseFloat(trade.sl_price).toFixed(2)}</div>
+      </div>
+      <div class="trade-detail-item">
+        <div class="trade-detail-label">Position ID</div>
+        <div class="trade-detail-value" style="font-size: 11px; word-break: break-all;">${trade.position_id}</div>
+      </div>
+      <div class="trade-detail-item">
+        <div class="trade-detail-label">Opened At</div>
+        <div class="trade-detail-value">${trade.opened_at ? trade.opened_at.slice(0, 16).replace('T', ' ') : '—'}</div>
+      </div>
+      <div class="trade-detail-item">
+        <div class="trade-detail-label">Status</div>
+        <div class="trade-detail-value">${trade.status || 'open'}</div>
+      </div>
+    </div>
+  `;
 }
