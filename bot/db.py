@@ -36,7 +36,8 @@ def init_db():
             position_id   TEXT,
             opened_at     TEXT,
             closed_at     TEXT,
-            strategy_note TEXT
+            strategy_note TEXT,
+            confidence    REAL DEFAULT 0.0    -- strategy confidence % (0-100)
         )
     """)
 
@@ -103,7 +104,8 @@ def init_db():
             position_id   TEXT,
             opened_at     TEXT,
             closed_at     TEXT,
-            strategy_note TEXT
+            strategy_note TEXT,
+            confidence    REAL DEFAULT 0.0    -- strategy confidence % (0-100)
         )
     """)
 
@@ -121,15 +123,15 @@ def init_db():
 
 # ── Trades ───────────────────────────────────
 def insert_trade(pair, side, entry_price, quantity, leverage, tp_price, sl_price,
-                 order_id="", position_id="", strategy_note=""):
+                 order_id="", position_id="", strategy_note="", confidence=0.0):
     conn = get_conn()
     conn.execute("""
         INSERT INTO trades
             (pair, side, entry_price, quantity, leverage, tp_price, sl_price,
-             order_id, position_id, opened_at, strategy_note)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?)
+             order_id, position_id, opened_at, strategy_note, confidence)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
     """, (pair, side, entry_price, quantity, leverage, tp_price, sl_price,
-          order_id, position_id, datetime.utcnow().isoformat(), strategy_note))
+          order_id, position_id, datetime.utcnow().isoformat(), strategy_note, confidence))
     conn.commit()
     conn.close()
 
@@ -320,15 +322,15 @@ def init_paper_wallet_if_missing(balance: float):
 
 # ── Paper trades ────────────────────────────
 def insert_paper_trade(pair, side, entry_price, quantity, leverage, tp_price, sl_price,
-                       fee_paid=0.0, order_id="", position_id="", strategy_note=""):
+                       fee_paid=0.0, order_id="", position_id="", strategy_note="", confidence=0.0):
     conn = get_conn()
     conn.execute("""
         INSERT INTO paper_trades
             (pair, side, entry_price, quantity, leverage, tp_price, sl_price,
-             fee_paid, order_id, position_id, opened_at, strategy_note)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+             fee_paid, order_id, position_id, opened_at, strategy_note, confidence)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, (pair, side, entry_price, quantity, leverage, tp_price, sl_price,
-          fee_paid, order_id, position_id, datetime.utcnow().isoformat(), strategy_note))
+          fee_paid, order_id, position_id, datetime.utcnow().isoformat(), strategy_note, confidence))
     conn.commit()
     conn.close()
 

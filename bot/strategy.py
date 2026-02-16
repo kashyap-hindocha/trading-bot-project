@@ -86,13 +86,71 @@ def compute_indicators(candles: list[dict]) -> dict:
         "ema_slow_prev": ema_slow_series[-2] if len(ema_slow_series) >= 2 else None,
         "rsi":         rsi,
         "last_close":  closes[-1] if closes else None,
+        "ema_fast_series": ema_fast_series,
+        "ema_slow_series": ema_slow_series,
     }
+
+
+def calculate_confidence(ind: dict, side: str) -> float:
+    """
+    Calculate strategy confidence (0-100%) based on indicator alignment.
+    
+    Factors:
+    - EMA crossover (40% weight)
+    - RSI alignment (40% weight)
+    - Trend strength - EMA separation (20% weight)
+    """
+    confidence = 0.0
+    
+    if not ind.get("ema_fast") or not ind.get("ema_slow"):
+        return 0.0
+    
+    # 1. EMA Crossover (40% weight) - proximity to crossover
+    ema_diff = abs(ind["ema_fast"] - ind["ema_slow"])
+    ema_separation = abs(ind["ema_slow_series"][-1] - ind["ema_fast_series"][-1]) if len(ind.get("ema_slow_series", [])) > 0 else 0.01
+    crossover_proximity = max(0, 1 - (ema_diff / max(ema_separation, 0.01)))
+    
+    if side == "BUY":
+        # Fresh BUY crossover = higher confidence
+        crossed_up = (ind["ema_fast_prev"] <= ind["ema_slow_prev"] and
+                      ind["ema_fast"] > ind["ema_slow"])
+        confidence += 40 if crossed_up else (crossover_proximity * 40)
+    else:
+        # Fresh SELL crossover = higher confidence
+        crossed_down = (ind["ema_fast_prev"] >= ind["ema_slow_prev"] and
+                        ind["ema_fast"] < ind["ema_slow"])
+        confidence += 40 if crossed_down else (crossover_proximity * 40)
+    
+    # 2. RSI Alignment (40% weight)
+    rsi = ind["rsi"]
+    if side == "BUY":
+        # BUY: RSI should be below overbought, ideally in oversold
+        if rsi < CONFIG["rsi_oversold"]:
+            confidence += 40  # Ideal oversold condition
+        elif rsi < CONFIG["rsi_overbought"]:
+            rsi_alignment = (CONFIG["rsi_overbought"] - rsi) / CONFIG["rsi_overbought"]
+            confidence += 40 * rsi_alignment
+    else:
+        # SELL: RSI should be above oversold, ideally in overbought
+        if rsi > CONFIG["rsi_overbought"]:
+            confidence += 40  # Ideal overbought condition
+        elif rsi > CONFIG["rsi_oversold"]:
+            rsi_alignment = (rsi - CONFIG["rsi_oversold"]) / (100 - CONFIG["rsi_oversold"])
+            confidence += 40 * rsi_alignment
+    
+    # 3. Trend Strength - EMA Separation (20% weight)
+    if ema_separation > 0:
+        last_close = ind["last_close"]
+        trend_strength = min(1.0, ema_separation / (last_close * 0.02))  # normalize by 2% of price
+        confidence += 20 * trend_strength
+    
+    return min(100.0, round(confidence, 1))
 
 
 # ─────────────────────────────────────────────
 #  SIGNAL LOGIC — edit this function
 # ─────────────────────────────────────────────
-def evaluate(candles: list[dict]) -> str | None:
+def evaluate(candles: list[dict], return_confidence: bool = False) -> str | None | dict:
     """
     Main entry point called by the bot on every new candle.
 
@@ -101,15 +159,25 @@ def evaluate(candles: list[dict]) -> str | None:
     BUY  when fast EMA crosses above slow EMA AND RSI < overbought
     SELL when fast EMA crosses below slow EMA AND RSI > oversold
 
-    Replace or extend this logic with your own strategy.
+    Args:
+        candles: List of candle dicts with OHLCV data
+        return_confidence: If True, returns {"signal": str, "confidence": float}
+                          If False, returns just signal string (backward compatible)
+
+    Returns:
+        str or dict: "BUY"/"SELL"/None or {"signal": ..., "confidence": ...}
     """
     if len(candles) < CONFIG["ema_slow"] + 5:
-        return None   # not enough data yet
+        if return_confidence:
+            return {"signal": None, "confidence": 0.0}
+        return None
 
     ind = compute_indicators(candles)
 
     if None in (ind["ema_fast"], ind["ema_slow"],
                 ind["ema_fast_prev"], ind["ema_slow_prev"]):
+        if return_confidence:
+            return {"signal": None, "confidence": 0.0}
         return None
 
     # EMA crossover detection
@@ -119,15 +187,22 @@ def evaluate(candles: list[dict]) -> str | None:
     crossed_down = (ind["ema_fast_prev"] >= ind["ema_slow_prev"] and
                     ind["ema_fast"]       <  ind["ema_slow"])
 
+    signal = None
+    confidence = 0.0
+
     if crossed_up and ind["rsi"] < CONFIG["rsi_overbought"]:
-        logger.info(f"BUY signal | EMA fast={ind['ema_fast']:.2f} slow={ind['ema_slow']:.2f} RSI={ind['rsi']}")
-        return "BUY"
+        signal = "BUY"
+        confidence = calculate_confidence(ind, "BUY")
+        logger.info(f"BUY signal | EMA fast={ind['ema_fast']:.2f} slow={ind['ema_slow']:.2f} RSI={ind['rsi']} | Confidence: {confidence:.1f}%")
 
     if crossed_down and ind["rsi"] > CONFIG["rsi_oversold"]:
-        logger.info(f"SELL signal | EMA fast={ind['ema_fast']:.2f} slow={ind['ema_slow']:.2f} RSI={ind['rsi']}")
-        return "SELL"
+        signal = "SELL"
+        confidence = calculate_confidence(ind, "SELL")
+        logger.info(f"SELL signal | EMA fast={ind['ema_fast']:.2f} slow={ind['ema_slow']:.2f} RSI={ind['rsi']} | Confidence: {confidence:.1f}%")
 
-    return None
+    if return_confidence:
+        return {"signal": signal, "confidence": confidence}
+    return signal
 
 
 # ─────────────────────────────────────────────

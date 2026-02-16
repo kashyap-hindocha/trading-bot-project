@@ -242,3 +242,40 @@ function toggleFavorite(pair) {
 function updatePairConfig(pair, field, value) {
   pairConfigs[pair][field] = field === 'leverage' ? parseInt(value) : parseFloat(value);
 }
+// ── Active Pairs Rendering ──
+async function renderActivePairs() {
+  try {
+    const response = await fetch(API + '/api/pairs/active');
+    if (!response.ok) return;
+
+    const data = await response.json();
+    const container = document.getElementById('activePairsContainer');
+    
+    if (!data.active_pairs || data.active_pairs.length === 0) {
+      container.innerHTML = '<div style="color: var(--gray-2); font-size: 12px; padding: 10px;">No active trades</div>';
+      return;
+    }
+
+    container.innerHTML = data.active_pairs.map(pairData => {
+      const confidence = pairData.avg_confidence || 0;
+      const confClass = confidence >= 90 ? 'high' : confidence >= 70 ? 'medium' : 'low';
+      const baseCoin = pairData.pair.replace('B-', '').replace('_USDT', '');
+      
+      return `
+        <div class="active-pair-badge">
+          <div class="active-pair-name">${baseCoin}</div>
+          <div class="active-pair-info">
+            <div class="active-pair-trades">
+              📈 ${pairData.open_positions} trade${pairData.open_positions !== 1 ? 's' : ''}
+            </div>
+            <div class="active-pair-confidence ${confClass}">
+              ✓ ${confidence.toFixed(1)}%
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  } catch (e) {
+    console.error('Error fetching active pairs:', e);
+  }
+}

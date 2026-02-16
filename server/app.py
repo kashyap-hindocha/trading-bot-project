@@ -742,5 +742,137 @@ def pairs_config_bulk():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/pairs/active")
+def pairs_active():
+    """Get currently active trading pairs with open positions."""
+    try:
+        mode = db.get_trading_mode()
+        
+        # Get all open trades grouped by pair
+        if mode == "PAPER":
+            all_trades = db.get_open_paper_trades()
+        else:
+            all_trades = db.get_open_trades()
+        
+        # Group by pair
+        pairs_trading = {}
+        for trade in all_trades:
+            pair = trade.get("pair")
+            if pair not in pairs_trading:
+                pairs_trading[pair] = {
+                    "pair": pair,
+                    "open_positions": 0,
+                    "total_confidence": 0.0,
+                    "avg_confidence": 0.0,
+                    "trades": []
+                }
+            
+            pairs_trading[pair]["open_positions"] += 1
+            confidence = float(trade.get("confidence", 0))
+            pairs_trading[pair]["total_confidence"] += confidence
+            pairs_trading[pair]["trades"].append({
+                "id": trade.get("id"),
+                "side": trade.get("side"),
+                "entry_price": float(trade.get("entry_price", 0)),
+                "confidence": confidence,
+                "opened_at": trade.get("opened_at")
+            })
+        
+        # Calculate averages
+        for pair_info in pairs_trading.values():
+            if pair_info["open_positions"] > 0:
+                pair_info["avg_confidence"] = round(
+                    pair_info["total_confidence"] / pair_info["open_positions"], 1
+                )
+        
+        return jsonify({
+            "mode": mode,
+            "active_pairs": list(pairs_trading.values()),
+            "total_active_pairs": len(pairs_trading),
+            "total_open_positions": len(all_trades),
+            "timestamp": datetime.utcnow().isoformat()
+        })
+    except Exception as e:
+        app.logger.error(f"Error fetching active pairs: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/trades/by-pair")
+def trades_by_pair():
+    """Get all trades grouped by pair with confidence scores."""
+    try:
+        limit = int(request.args.get("limit", 100))
+        mode = db.get_trading_mode()
+        
+        if mode == "PAPER":
+            all_trades = db.get_all_paper_trades(limit)
+        else:
+            all_trades = db.get_all_trades(limit)
+        
+        # Group by pair
+        pairs_stats = {}
+        for trade in all_trades:
+            pair = trade.get("pair")
+            if pair not in pairs_stats:
+                pairs_stats[pair] = {
+                    "pair": pair,
+                    "total_trades": 0,
+                    "open_trades": 0,
+                    "closed_trades": 0,
+                    "total_confidence": 0.0,
+                    "avg_confidence": 0.0,
+                    "total_pnl": 0.0,
+                    "win_rate": 0.0,
+                    "recent_trades": []
+                }
+            
+            status = trade.get("status", "")
+            confidence = float(trade.get("confidence", 0))
+            pnl = float(trade.get("pnl") or 0) if status == "closed" else None
+            
+            pairs_stats[pair]["total_trades"] += 1
+            pairs_stats[pair]["total_confidence"] += confidence
+            
+            if status == "open":
+                pairs_stats[pair]["open_trades"] += 1
+            else:
+                pairs_stats[pair]["closed_trades"] += 1
+                if pnl is not None:
+                    pairs_stats[pair]["total_pnl"] += pnl
+            
+            pairs_stats[pair]["recent_trades"].append({
+                "id": trade.get("id"),
+                "side": trade.get("side"),
+                "status": status,
+                "entry_price": float(trade.get("entry_price", 0)),
+                "exit_price": float(trade.get("exit_price") or 0) if status == "closed" else None,
+                "confidence": confidence,
+                "pnl": pnl,
+                "opened_at": trade.get("opened_at"),
+                "closed_at": trade.get("closed_at")
+            })
+        
+        # Calculate averages
+        for pair_info in pairs_stats.values():
+            if pair_info["total_trades"] > 0:
+                pair_info["avg_confidence"] = round(
+                    pair_info["total_confidence"] / pair_info["total_trades"], 1
+                )
+            if pair_info["closed_trades"] > 0:
+                wins = sum(1 for t in pair_info["recent_trades"] 
+                          if t["pnl"] is not None and t["pnl"] > 0)
+                pair_info["win_rate"] = round(wins / pair_info["closed_trades"] * 100, 1)
+        
+        return jsonify({
+            "mode": mode,
+            "pairs_stats": list(pairs_stats.values()),
+            "trading_pairs": len(pairs_stats),
+            "timestamp": datetime.utcnow().isoformat()
+        })
+    except Exception as e:
+        app.logger.error(f"Error fetching trades by pair: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False)

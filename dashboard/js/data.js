@@ -132,6 +132,7 @@ async function fetchAll() {
     renderLogs(logs);
     renderPaperStats(paperStats, paperTrades);
     renderPaperTrades(paperTrades);
+    renderActivePairs();
     updatePairPnlChart();
 
     document.getElementById('lastUpdate').textContent = 'Updated ' + new Date().toLocaleTimeString();
