@@ -124,24 +124,10 @@
   <!-- Charts and Favorites Layout (70/30) -->
   <div class="charts-pairs-container">
     <div class="charts-section">
-      <!-- Price Chart -->
+      <!-- Candlestick Chart (Main Dynamic Chart) -->
       <div class="chart-panel wide">
         <div class="panel-title">
-          📊 Live Price — Pair Chart
-          <div class="panel-tools">
-            <select id="priceChartPairSelect" onchange="onPriceChartPairChange()" style="padding: 4px 8px; background: #1e2a35; color: #00e5ff; border: 1px solid #2a3a45; border-radius: 4px; font-family: Space Mono; font-size: 12px; min-width: 120px;">
-              <option value="">Select Pair...</option>
-            </select>
-            <span id="priceChartInfo" style="color: #4a6070; font-size: 11px; margin-left: 12px;">Latest: —</span>
-          </div>
-        </div>
-        <div class="chart-wrap"><canvas id="priceChart"></canvas></div>
-      </div>
-
-      <!-- Candlestick Chart -->
-      <div class="chart-panel wide">
-        <div class="panel-title">
-          🕯️ Candlestick Chart (Interactive) — Threshold: 90%
+          🕯️ Live Price Chart (Interactive) — Threshold: 90%
           <div class="panel-tools">
             <select id="candlePairSelect" onchange="onCandlePairSelect()" style="padding: 4px 8px; background: #1e2a35; color: #00e5ff; border: 1px solid #2a3a45; border-radius: 4px; font-family: Space Mono; font-size: 12px; min-width: 120px;">
               <option value="">Select Pair...</option>

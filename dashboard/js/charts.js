@@ -39,15 +39,19 @@ function initCharts() {
     options: { ...baseOpts }
   });
 
-  priceChart = new Chart(document.getElementById('priceChart'), {
-    type: 'line',
-    data: { labels: [], datasets: [
-      { label: 'Price', data: [], borderColor: '#00e5ff', backgroundColor: 'rgba(0,229,255,0.08)', borderWidth: 2, fill: true, tension: 0.2, pointRadius: 0 },
-      { label: 'Real Trades', type: 'scatter', data: [], pointRadius: 5, pointBackgroundColor: '#00ff88' },
-      { label: 'Paper Trades', type: 'scatter', data: [], pointRadius: 5, pointBackgroundColor: '#ffd230' },
-    ] },
-    options: { ...baseOpts, plugins: { legend: { display: true, labels: { color: '#4a6070', font: { family: 'Space Mono', size: 10 } } } } }
-  });
+  // Only create priceChart if element exists (can be undefined if not in HTML)
+  const priceChartEl = document.getElementById('priceChart');
+  if (priceChartEl) {
+    priceChart = new Chart(priceChartEl, {
+      type: 'line',
+      data: { labels: [], datasets: [
+        { label: 'Price', data: [], borderColor: '#00e5ff', backgroundColor: 'rgba(0,229,255,0.08)', borderWidth: 2, fill: true, tension: 0.2, pointRadius: 0 },
+        { label: 'Real Trades', type: 'scatter', data: [], pointRadius: 5, pointBackgroundColor: '#00ff88' },
+        { label: 'Paper Trades', type: 'scatter', data: [], pointRadius: 5, pointBackgroundColor: '#ffd230' },
+      ] },
+      options: { ...baseOpts, plugins: { legend: { display: true, labels: { color: '#4a6070', font: { family: 'Space Mono', size: 10 } } } } }
+    });
+  }
 
   pairPnlChart = new Chart(document.getElementById('pairPnlChart'), {
     type: 'line',
@@ -57,7 +61,7 @@ function initCharts() {
 }
 
 async function updatePriceChart() {
-  if (!selectedPair) return;
+  if (!selectedPair || !priceChart) return; // Skip if chart doesn't exist
   try {
     const resp = await fetch(API + `/api/candles?pair=${encodeURIComponent(selectedPair)}&limit=200`);
     const candles = await resp.json();

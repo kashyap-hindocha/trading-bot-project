@@ -169,7 +169,8 @@ async function loadPairs() {
     renderPairs();
     renderFavorites();
     updatePairSelect();
-    document.getElementById('applyCoinsBtn').disabled = false;
+    const btn = document.getElementById('applyCoinsBtn');
+    if (btn) btn.disabled = false;
   } catch (e) {
     console.error('Error loading pairs:', e);
     document.getElementById('coinGrid').innerHTML = '<div class="loading">Error loading pairs</div>';

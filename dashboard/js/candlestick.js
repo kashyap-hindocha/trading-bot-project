@@ -91,13 +91,24 @@ async function updateCandleChart() {
     if (!Array.isArray(data) || data.length === 0) return;
 
     // Format data for lightweight-charts
-    const candleData = data.map(candle => ({
-      time: Math.floor(new Date(candle.timestamp).getTime() / 1000),
-      open: parseFloat(candle.open),
-      high: parseFloat(candle.high),
-      low: parseFloat(candle.low),
-      close: parseFloat(candle.close),
-    }));
+    const candleData = data.map(candle => {
+      try {
+        // Parse timestamp - handle different formats
+        let timestamp = candle.timestamp;
+        if (!timestamp) return null;
+        const date = new Date(timestamp);
+        if (isNaN(date.getTime())) return null; // Skip invalid dates
+        return {
+          time: Math.floor(date.getTime() / 1000),
+          open: parseFloat(candle.open),
+          high: parseFloat(candle.high),
+          low: parseFloat(candle.low),
+          close: parseFloat(candle.close),
+        };
+      } catch (e) {
+        return null; // Skip if parsing fails
+      }
+    }).filter(c => c !== null); // Remove invalid entries
 
     // Set data on series
     candleSeries.setData(candleData);
@@ -147,5 +158,5 @@ function onTimeframeChange() {
 
 // Auto-refresh candlestick data
 setInterval(() => {
-  if (candleChart && selectedCandlePair) updateCandleChart();
+  if (candleChart && candleSeries && selectedCandlePair) updateCandleChart();
 }, 10000); // Update every 10 seconds
