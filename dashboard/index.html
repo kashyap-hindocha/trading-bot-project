@@ -411,22 +411,7 @@ function updateStatus(data) {
 
   // Update bot status
   botRunning = data.bot_running;
-  const btn = document.getElementById('toggleBtn');
-  const dot = document.getElementById('statusDot');
-  const txt = document.getElementById('statusText');
-
-  if (botRunning) {
-    btn.textContent = '⏹ Stop Bot';
-    btn.className = 'toggle-btn stop';
-    dot.className = 'dot live';
-    txt.textContent = 'LIVE';
-  } else {
-    btn.textContent = '▶ Start Bot';
-    btn.className = 'toggle-btn start';
-    dot.className = 'dot stopped';
-    txt.textContent = 'STOPPED';
-  }
-  btn.disabled = false;
+  updateBotStatusUI();
 }
 
 function showToast(msg, type = 'success') {
@@ -561,8 +546,8 @@ function renderStats(s) {
   el.textContent = (pnl >= 0 ? '+' : '') + pnl.toFixed(4) + ' USDT';
   el.className   = 'card-value ' + (pnl >= 0 ? 'green' : 'red');
   document.getElementById('winRate').textContent    = (s.win_rate ?? 0) + '%';
-  document.getElementById('winsLosses').textContent  = `${s.wins ?? 0} wins / ${s.losses ?? 0} losses`;
-  document.getElementById('totalTrades').textContent = `${s.total ?? 0} total trades`;
+  document.getElementById('winsLosses').textContent  = `${s.winning_trades ?? 0} wins / ${s.losing_trades ?? 0} losses`;
+  document.getElementById('totalTrades').textContent = `${s.total_trades ?? 0} total trades`;
 }
 
 function renderEquity(data) {
@@ -618,7 +603,7 @@ function renderLogs(logs) {
 // ── Boot ──────────────────────────────────
 initCharts();
 initWebSocket();
-// Note: Data updates now come via WebSocket, no polling needed!
+// Fallback: If WebSocket doesn't connect in 5s, start HTTP polling
 </script>
 </body>
 </html>
