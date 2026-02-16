@@ -569,7 +569,23 @@ tbody td {
 }
 
 .coin-params {
-  display: none;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-left: auto;
+}
+
+.coin-param {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.coin-param label {
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
 
 .coin-input {
@@ -580,7 +596,7 @@ tbody td {
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text);
-  width: 70px;
+  width: 80px;
 }
 
 .coin-input:focus { outline: none; border-color: var(--accent); }

@@ -28,6 +28,7 @@ CONFIG = {
     "interval":      "5m",           # Candle interval
     "leverage":      5,              # Leverage (1 = no leverage)
     "quantity":      0.001,          # Order size in base currency (BTC)
+    "inr_amount":    300.0,          # Margin budget per trade in INR
     "tp_pct":        0.015,          # Take profit %  (1.5%)
     "sl_pct":        0.008,          # Stop loss %    (0.8%)
     "max_open_trades": 5,            # Max simultaneous open positions

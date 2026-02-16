@@ -154,6 +154,22 @@ async function loadPairs() {
 
     allPairs = available || [];
 
+    const configMap = {};
+    (configs || []).forEach(cfg => {
+      if (cfg && cfg.pair) configMap[cfg.pair] = cfg;
+    });
+
+    pairConfigs = {};
+    allPairs.forEach(p => {
+      const cfg = configMap[p.pair] || {};
+      pairConfigs[p.pair] = {
+        enabled: Number.isFinite(cfg.enabled) ? cfg.enabled : 0,
+        leverage: Number.isFinite(cfg.leverage) ? cfg.leverage : 5,
+        quantity: Number.isFinite(cfg.quantity) ? cfg.quantity : 0.001,
+        inr_amount: Number.isFinite(cfg.inr_amount) ? cfg.inr_amount : 300
+      };
+    });
+
     if (!allPairs.length) {
       document.getElementById('coinGrid').innerHTML = '<div class="loading">No pairs available</div>';
       return;
@@ -187,7 +203,8 @@ async function applyPairChanges() {
       pair,
       enabled: pairConfigs[pair].enabled,
       leverage: pairConfigs[pair].leverage,
-      quantity: pairConfigs[pair].quantity
+      quantity: pairConfigs[pair].quantity,
+      inr_amount: pairConfigs[pair].inr_amount
     }));
 
     const resp = await fetch(API + '/api/pairs/config/bulk', {
@@ -215,6 +232,47 @@ async function applyPairChanges() {
   } finally {
     btn.disabled = false;
     btn.textContent = 'Apply Changes & Restart Bots';
+  }
+}
+
+const savePairTimers = {};
+
+function scheduleSavePairConfig(pair, delayMs = 500) {
+  if (savePairTimers[pair]) {
+    clearTimeout(savePairTimers[pair]);
+  }
+  savePairTimers[pair] = setTimeout(() => {
+    savePairConfig(pair, true);
+  }, delayMs);
+}
+
+async function savePairConfig(pair, showSuccess = false) {
+  const cfg = pairConfigs[pair];
+  if (!cfg) return;
+
+  try {
+    const resp = await fetch(API + '/api/pairs/config/update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        pair,
+        enabled: cfg.enabled,
+        leverage: cfg.leverage,
+        quantity: cfg.quantity,
+        inr_amount: cfg.inr_amount
+      })
+    });
+
+    const data = await resp.json();
+    if (!data.success) {
+      showToast(data.error || 'Failed to update settings', 'error');
+      return;
+    }
+    if (showSuccess) {
+      showToast('Pair settings saved', 'success');
+    }
+  } catch (e) {
+    showToast('Request failed', 'error');
   }
 }
 

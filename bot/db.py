@@ -65,10 +65,17 @@ def init_db():
             enabled    INTEGER DEFAULT 0,   -- 0=disabled, 1=enabled
             leverage   INTEGER DEFAULT 5,
             quantity   REAL DEFAULT 0.001,
+            inr_amount REAL DEFAULT 300.0,
             created_at TEXT DEFAULT (datetime('now')),
             updated_at TEXT DEFAULT (datetime('now'))
         )
     """)
+
+    # Backfill existing DBs missing inr_amount column
+    cols = {row[1] for row in c.execute("PRAGMA table_info(pair_config)").fetchall()}
+    if "inr_amount" not in cols:
+        c.execute("ALTER TABLE pair_config ADD COLUMN inr_amount REAL DEFAULT 300.0")
+        c.execute("UPDATE pair_config SET inr_amount=300.0 WHERE inr_amount IS NULL")
 
     c.execute("""
         CREATE TABLE IF NOT EXISTS trading_mode (
@@ -225,6 +232,12 @@ def get_recent_logs(limit=50):
 
 
 # ── Pair Config ──────────────────────────────
+def get_pair_config(pair: str):
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM pair_config WHERE pair=?", (pair,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
 def get_all_pair_configs():
     """Get all pair configurations."""
     conn = get_conn()
@@ -241,18 +254,19 @@ def get_enabled_pairs():
     return [dict(r) for r in rows]
 
 
-def upsert_pair_config(pair: str, enabled: int, leverage: int, quantity: float):
+def upsert_pair_config(pair: str, enabled: int, leverage: int, quantity: float, inr_amount: float):
     """Insert or update pair configuration."""
     conn = get_conn()
     conn.execute("""
-        INSERT INTO pair_config (pair, enabled, leverage, quantity, updated_at)
-        VALUES (?, ?, ?, ?, datetime('now'))
+        INSERT INTO pair_config (pair, enabled, leverage, quantity, inr_amount, updated_at)
+        VALUES (?, ?, ?, ?, ?, datetime('now'))
         ON CONFLICT(pair) DO UPDATE SET
             enabled=excluded.enabled,
             leverage=excluded.leverage,
             quantity=excluded.quantity,
+            inr_amount=excluded.inr_amount,
             updated_at=datetime('now')
-    """, (pair, enabled, leverage, quantity))
+    """, (pair, enabled, leverage, quantity, inr_amount))
     conn.commit()
     conn.close()
 

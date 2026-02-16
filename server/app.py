@@ -70,6 +70,17 @@ def _extract_balance(payload):
     return None
 
 
+def _resolve_inr_amount(pair: str, provided):
+    if provided is not None:
+        parsed = _to_float(provided)
+        if parsed is not None:
+            return parsed
+    existing = db.get_pair_config(pair)
+    if existing and existing.get("inr_amount") is not None:
+        return existing.get("inr_amount")
+    return 300.0
+
+
 def _extract_balance_with_currency(payload):
     keys = (
         "available_balance",
@@ -824,14 +835,15 @@ def pairs_config_update():
         
         pair = data.get("pair")
         enabled = int(data.get("enabled", 0))
-        leverage = int(data.get("leverage", 5))
-        quantity = float(data.get("quantity", 0.001))
-        
         if not pair:
             return jsonify({"error": "Pair is required"}), 400
+
+        leverage = int(data.get("leverage", 5))
+        quantity = float(data.get("quantity", 0.001))
+        inr_amount = _resolve_inr_amount(pair, data.get("inr_amount"))
         
-        db.upsert_pair_config(pair, enabled, leverage, quantity)
-        db.log_event("INFO", f"Updated config for {pair}: enabled={enabled}, leverage={leverage}, qty={quantity}")
+        db.upsert_pair_config(pair, enabled, leverage, quantity, inr_amount)
+        db.log_event("INFO", f"Updated config for {pair}: enabled={enabled}, leverage={leverage}, qty={quantity}, inr={inr_amount}")
         
         return jsonify({"success": True, "message": f"Updated {pair} configuration"})
     except Exception as e:
@@ -852,9 +864,10 @@ def pairs_config_bulk():
             enabled = int(pair_data.get("enabled", 0))
             leverage = int(pair_data.get("leverage", 5))
             quantity = float(pair_data.get("quantity", 0.001))
+            inr_amount = _resolve_inr_amount(pair, pair_data.get("inr_amount"))
             
             if pair:
-                db.upsert_pair_config(pair, enabled, leverage, quantity)
+                db.upsert_pair_config(pair, enabled, leverage, quantity, inr_amount)
         
         db.log_event("INFO", f"Bulk updated {len(pairs)} pair configurations")
         return jsonify({"success": True, "message": f"Updated {len(pairs)} pairs"})

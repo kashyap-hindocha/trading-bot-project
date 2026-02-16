@@ -26,6 +26,7 @@ class CoinDCXREST:
 	def __init__(self, api_key, api_secret):
 		self.key    = api_key
 		self.secret = api_secret
+		self._inr_usdt_cache = {"rate": None, "ts": 0}
 
 	def _post(self, path, body):
 		body["timestamp"] = int(time.time() * 1000)
@@ -57,6 +58,76 @@ class CoinDCXREST:
 		)
 		resp.raise_for_status()
 		return resp.json()
+
+	def get_tickers(self):
+		resp = requests.get(f"{PUBLIC_BASE}/market_data/ticker", timeout=10)
+		resp.raise_for_status()
+		return resp.json()
+
+	def get_inr_usdt_rate(self, max_age_sec=60):
+		"""Return INR per 1 USDT using CoinDCX public ticker."""
+		now = time.time()
+		cached = self._inr_usdt_cache
+		if cached["rate"] and (now - cached["ts"]) <= max_age_sec:
+			return cached["rate"]
+
+		def _to_float(value):
+			try:
+				return float(value)
+			except (TypeError, ValueError):
+				return None
+
+		rate = None
+		try:
+			tickers = self.get_tickers()
+		except Exception as e:
+			logger.warning(f"Ticker fetch failed: {e}")
+			return None
+
+		if isinstance(tickers, dict):
+			if isinstance(tickers.get("data"), list):
+				tickers = tickers["data"]
+			else:
+				tickers = [
+					{"market": key, **value}
+					for key, value in tickers.items()
+					if isinstance(value, dict)
+				]
+
+		if isinstance(tickers, list):
+			for t in tickers:
+				if not isinstance(t, dict):
+					continue
+				market = t.get("market") or t.get("symbol") or t.get("pair")
+				if not isinstance(market, str):
+					continue
+				market = market.replace("/", "").replace("_", "").upper()
+				if market == "USDTINR":
+					price = (
+						t.get("last_price")
+						or t.get("last")
+						or t.get("price")
+						or t.get("close")
+					)
+					rate = _to_float(price)
+					break
+				if market == "INRUSDT":
+					price = (
+						t.get("last_price")
+						or t.get("last")
+						or t.get("price")
+						or t.get("close")
+					)
+					inv = _to_float(price)
+					if inv and inv > 0:
+						rate = 1 / inv
+						break
+
+		if rate and rate > 0:
+			cached["rate"] = rate
+			cached["ts"] = now
+			return rate
+		return None
 
 	def get_active_instruments(self):
 		resp = requests.get(f"{FUTURES_BASE}/exchange/v1/derivatives/futures/data/active_instruments", timeout=10)

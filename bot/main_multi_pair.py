@@ -154,6 +154,26 @@ def _calc_pnl(side: str, entry_price: float, exit_price: float, quantity: float,
     return (entry_price - exit_price) * quantity * leverage
 
 
+def _resolve_trade_sizing(pair: str, current_price: float):
+    pair_config = pair_data[pair]["config"]
+    leverage = pair_config.get("leverage", strategy.CONFIG["leverage"])
+    base_quantity = pair_config.get("quantity", strategy.CONFIG["quantity"])
+    inr_amount = pair_config.get("inr_amount", strategy.CONFIG.get("inr_amount"))
+    inr_amount = float(inr_amount) if inr_amount not in (None, "") else None
+
+    if inr_amount and current_price > 0:
+        rate = rest.get_inr_usdt_rate()
+        if rate and rate > 0:
+            usdt_margin = inr_amount / rate
+            notional_usdt = usdt_margin * leverage
+            quantity = notional_usdt / current_price
+            if quantity > 0:
+                return quantity, leverage, inr_amount, rate
+        logger.warning(f"{pair} INR sizing unavailable, falling back to fixed quantity")
+
+    return base_quantity, leverage, inr_amount, None
+
+
 def _check_paper_positions(pair: str, candle: dict):
     """Check if paper trading positions hit TP/SL and close them."""
     if _get_trading_mode() != "PAPER":
@@ -248,11 +268,14 @@ def _run_strategy(pair: str, current_price: float):
         order_type = "market_order"
         
         # Get pair-specific config
-        pair_config = pair_data[pair]["config"]
-        quantity = pair_config["quantity"]
-        leverage = pair_config["leverage"]
-        
-        logger.info(f"Using config for {pair}: leverage={leverage}x, quantity={quantity}")
+        quantity, leverage, inr_amount, inr_rate = _resolve_trade_sizing(pair, current_price)
+
+        if inr_rate:
+            logger.info(
+                f"Using INR sizing for {pair}: inr={inr_amount} rate={inr_rate:.4f} lev={leverage}x qty={quantity}"
+            )
+        else:
+            logger.info(f"Using config for {pair}: leverage={leverage}x, quantity={quantity}")
 
         # Place entry order
         order = rest.place_order(pair, side, order_type, quantity, leverage=leverage)
@@ -301,9 +324,7 @@ def _run_strategy(pair: str, current_price: float):
 def _run_paper_trade(pair: str, current_price: float, signal: str, confidence: float):
     """Execute paper trade for a pair."""
     side = "buy" if signal == "BUY" else "sell"
-    pair_config = pair_data[pair]["config"]
-    quantity = pair_config["quantity"]
-    leverage = pair_config["leverage"]
+    quantity, leverage, inr_amount, inr_rate = _resolve_trade_sizing(pair, current_price)
 
     wallet_balance = db.get_paper_wallet_balance()
     if wallet_balance is None or wallet_balance <= 0:
@@ -341,8 +362,17 @@ def _run_paper_trade(pair: str, current_price: float, signal: str, confidence: f
         confidence=confidence,
     )
 
-    logger.info(f"PAPER entry {pair} | side={side} qty={quantity} lev={leverage} fee={entry_fee:.4f} conf={confidence:.1f}%")
-    db.log_event("INFO", f"PAPER entry {pair} side={side} qty={quantity} lev={leverage} conf={confidence:.1f}%")
+    if inr_rate:
+        logger.info(
+            f"PAPER entry {pair} | side={side} inr={inr_amount} rate={inr_rate:.4f} qty={quantity} lev={leverage} fee={entry_fee:.4f} conf={confidence:.1f}%"
+        )
+        db.log_event(
+            "INFO",
+            f"PAPER entry {pair} side={side} inr={inr_amount} rate={inr_rate:.4f} qty={quantity} lev={leverage} conf={confidence:.1f}%",
+        )
+    else:
+        logger.info(f"PAPER entry {pair} | side={side} qty={quantity} lev={leverage} fee={entry_fee:.4f} conf={confidence:.1f}%")
+        db.log_event("INFO", f"PAPER entry {pair} side={side} qty={quantity} lev={leverage} conf={confidence:.1f}%")
 
 
 # ─────────────────────────────────────────────

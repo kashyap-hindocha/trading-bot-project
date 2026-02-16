@@ -118,6 +118,24 @@ def _calc_pnl(side: str, entry_price: float, exit_price: float, quantity: float,
         return (exit_price - entry_price) * quantity * leverage
     return (entry_price - exit_price) * quantity * leverage
 
+def _resolve_trade_sizing(current_price: float, pair_config: dict | None):
+    leverage = pair_config["leverage"] if pair_config else strategy.CONFIG["leverage"]
+    base_quantity = pair_config["quantity"] if pair_config else strategy.CONFIG["quantity"]
+    inr_amount = pair_config.get("inr_amount") if pair_config else strategy.CONFIG.get("inr_amount")
+    inr_amount = float(inr_amount) if inr_amount not in (None, "") else None
+
+    if inr_amount and current_price > 0:
+        rate = rest.get_inr_usdt_rate()
+        if rate and rate > 0:
+            usdt_margin = inr_amount / rate
+            notional_usdt = usdt_margin * leverage
+            quantity = notional_usdt / current_price
+            if quantity > 0:
+                return quantity, leverage, inr_amount, rate
+        logger.warning("INR sizing unavailable, falling back to fixed quantity")
+
+    return base_quantity, leverage, inr_amount, None
+
 
 def _check_paper_positions(candle: dict):
     if _get_trading_mode() != "PAPER":
@@ -161,7 +179,6 @@ def _check_paper_positions(candle: dict):
         quantity = float(t.get("quantity") or 0)
         leverage = int(t.get("leverage") or 1)
         entry_fee = float(t.get("fee_paid") or 0)
-        exit_fee = exit_price * quantity * TAKER_FEE_RATE
 
         raw_pnl = _calc_pnl(side, entry_price, exit_price, quantity, leverage)
         net_pnl = raw_pnl - entry_fee - exit_fee
@@ -215,10 +232,14 @@ def _run_strategy(current_price: float):
         
         # Get pair-specific config from database, fallback to strategy defaults
         pair_config = _get_pair_config()
-        quantity = pair_config["quantity"] if pair_config else strategy.CONFIG["quantity"]
-        leverage = pair_config["leverage"] if pair_config else strategy.CONFIG["leverage"]
-        
-        logger.info(f"Using config for {PAIR}: leverage={leverage}x, quantity={quantity} | Position: {signal}")
+        quantity, leverage, inr_amount, inr_rate = _resolve_trade_sizing(current_price, pair_config)
+
+        if inr_rate:
+            logger.info(
+                f"Using INR sizing for {PAIR}: inr={inr_amount} rate={inr_rate:.4f} lev={leverage}x qty={quantity} | Position: {signal}"
+            )
+        else:
+            logger.info(f"Using config for {PAIR}: leverage={leverage}x, quantity={quantity} | Position: {signal}")
 
         # Place entry order
         order = rest.place_order(PAIR, side, order_type, quantity, leverage=leverage)
@@ -266,8 +287,7 @@ def _run_strategy(current_price: float):
 def _run_paper_trade(current_price: float, signal: str, confidence: float = 0.0):
     side = "buy" if signal == "LONG" else "sell"
     pair_config = _get_pair_config()
-    quantity = pair_config["quantity"] if pair_config else strategy.CONFIG["quantity"]
-    leverage = pair_config["leverage"] if pair_config else strategy.CONFIG["leverage"]
+    quantity, leverage, inr_amount, inr_rate = _resolve_trade_sizing(current_price, pair_config)
 
     wallet_balance = db.get_paper_wallet_balance()
     if wallet_balance is None or wallet_balance <= 0:
@@ -304,8 +324,17 @@ def _run_paper_trade(current_price: float, signal: str, confidence: float = 0.0)
         strategy_note=f"EMA crossover signal {signal} | Confidence: {confidence:.1f}%",
     )
 
-    logger.info(f"PAPER entry {PAIR} | {signal} qty={quantity} lev={leverage} fee={entry_fee:.4f} | Confidence: {confidence:.1f}%")
-    db.log_event("INFO", f"PAPER entry {PAIR} {signal} qty={quantity} lev={leverage} | Confidence: {confidence:.1f}%")
+    if inr_rate:
+        logger.info(
+            f"PAPER entry {PAIR} | {signal} inr={inr_amount} rate={inr_rate:.4f} qty={quantity} lev={leverage} fee={entry_fee:.4f} | Confidence: {confidence:.1f}%"
+        )
+        db.log_event(
+            "INFO",
+            f"PAPER entry {PAIR} {signal} inr={inr_amount} rate={inr_rate:.4f} qty={quantity} lev={leverage} | Confidence: {confidence:.1f}%",
+        )
+    else:
+        logger.info(f"PAPER entry {PAIR} | {signal} qty={quantity} lev={leverage} fee={entry_fee:.4f} | Confidence: {confidence:.1f}%")
+        db.log_event("INFO", f"PAPER entry {PAIR} {signal} qty={quantity} lev={leverage} | Confidence: {confidence:.1f}%")
 
 
 # ─────────────────────────────────────────────

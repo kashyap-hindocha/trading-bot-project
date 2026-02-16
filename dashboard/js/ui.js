@@ -144,15 +144,29 @@ function renderPairs() {
     const readiness = pairReadiness[p.pair] || { readiness: 0, bias: '—' };
     const pct = Math.min(100, Math.max(0, readiness.readiness || 0));
     const isNear90 = pct >= 85; // Highlight if close to 90%
+    const cfg = pairConfigs[p.pair] || { enabled: 0, leverage: 5, inr_amount: 300 };
 
     return `
-      <div class="coin-card ${isNear90 ? 'near-execute' : ''}" data-pair="${p.pair}">
+      <div class="coin-card ${isNear90 ? 'near-execute' : ''} ${cfg.enabled ? 'enabled' : ''}" data-pair="${p.pair}">
+        <div class="coin-toggle ${cfg.enabled ? 'on' : ''}" onclick="togglePair('${p.pair}'); scheduleSavePairConfig('${p.pair}')"></div>
         <div class="coin-info-simple">
           <div class="coin-name">${baseCoin}/USDT</div>
           <div class="readiness">
             <span class="readiness-label">${readiness.bias || '—'}</span>
             <div class="readiness-bar"><span data-readiness="${p.pair}" style="width: ${pct}%"></span></div>
             <span class="readiness-val" data-readiness-val="${p.pair}">${pct}%</span>
+          </div>
+        </div>
+        <div class="coin-params">
+          <div class="coin-param">
+            <label>Lev</label>
+            <input class="coin-input" type="number" min="1" step="1" value="${cfg.leverage}"
+              onchange="updatePairConfig('${p.pair}','leverage', this.value); scheduleSavePairConfig('${p.pair}')">
+          </div>
+          <div class="coin-param">
+            <label>INR</label>
+            <input class="coin-input" type="number" min="1" step="1" value="${cfg.inr_amount}"
+              onchange="updatePairConfig('${p.pair}','inr_amount', this.value); scheduleSavePairConfig('${p.pair}')">
           </div>
         </div>
         <button class="coin-fav ${favoritePairs.has(p.pair) ? 'starred' : ''}" onclick="toggleFavorite('${p.pair}')" title="${favoritePairs.has(p.pair) ? 'Remove from favorites' : 'Add to favorites'}">★</button>
@@ -253,7 +267,9 @@ function toggleFavorite(pair) {
 }
 
 function updatePairConfig(pair, field, value) {
-  pairConfigs[pair][field] = field === 'leverage' ? parseInt(value) : parseFloat(value);
+  const parsed = field === 'leverage' ? parseInt(value, 10) : parseFloat(value);
+  if (!Number.isFinite(parsed)) return;
+  pairConfigs[pair][field] = parsed;
 }
 // ── Active Pairs Rendering ──
 async function renderActivePairs() {
