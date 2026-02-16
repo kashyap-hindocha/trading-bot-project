@@ -1273,23 +1273,6 @@ async function applyPairChanges() {
     btn.textContent = 'Apply Changes & Restart Bots';
   }
 }
-      // Auto-restart if bot is running
-      if (botRunning) {
-        setTimeout(async () => {
-          await fetch(API + '/api/bot/stop', { method: 'POST' });
-          setTimeout(() => fetch(API + '/api/bot/start', { method: 'POST' }), 2000);
-        }, 1000);
-      }
-    } else {
-      showToast(data.error || 'Failed to update settings', 'error');
-    }
-  } catch (e) {
-    showToast('Request failed', 'error');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Apply Changes & Restart Bots';
-  }
-}
 
 async function updateReadiness() {
   if (!pairsList.length) return;
@@ -1333,7 +1316,6 @@ fetchAll();
 setInterval(fetchAll, REFRESH_MS);
 setInterval(checkBotStatus, REFRESH_MS);
 setInterval(updateReadiness, REFRESH_MS * 2);
-setInterval(updatePriceChart, REFRESH_MS * 2);
 setInterval(updatePriceChart, REFRESH_MS * 2);
 </script>
 </body>
