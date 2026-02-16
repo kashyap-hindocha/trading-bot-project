@@ -218,10 +218,12 @@ def _fetch_wallet_payload(key, secret, debug=False):
         }
 
         # GET request as per official docs
+        # IMPORTANT: Send the exact JSON string that was signed (use data= not json=)
+        json_body = json.dumps(body, separators=(",", ":"))
         resp = requests.get(
             f"https://api.coindcx.com{path}",
             headers=headers,
-            json=body,
+            data=json_body,
             timeout=5,
         )
         

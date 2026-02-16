@@ -64,8 +64,9 @@ print(f"Signature: {signature[:20]}...")
 print()
 
 try:
-    # GET request with JSON body
-    response = requests.get(url, json=body, headers=headers, timeout=10)
+    # GET request with the EXACT JSON string that was signed
+    # CRITICAL: Use data=json_body not json=body to match signature
+    response = requests.get(url, data=json_body, headers=headers, timeout=10)
     
     print(f"Status Code: {response.status_code}")
     print()

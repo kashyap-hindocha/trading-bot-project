@@ -29,8 +29,11 @@ class CoinDCXREST:
 
 	def _post(self, path, body):
 		body["timestamp"] = int(time.time() * 1000)
-		sig  = _sign(self.secret, body)
-		resp = requests.post(FUTURES_BASE + path, headers=_headers(self.key, sig), json=body, timeout=10)
+		# Create signature from JSON string
+		json_body = json.dumps(body, separators=(",", ":"))
+		sig = hmac.new(bytes(self.secret, encoding="utf-8"), json_body.encode(), hashlib.sha256).hexdigest()
+		# Send the EXACT string that was signed (use data= not json=)
+		resp = requests.post(FUTURES_BASE + path, headers=_headers(self.key, sig), data=json_body, timeout=10)
 		resp.raise_for_status()
 		return resp.json()
 
@@ -38,8 +41,11 @@ class CoinDCXREST:
 		if body is None:
 			body = {}
 		body["timestamp"] = int(time.time() * 1000)
-		sig  = _sign(self.secret, body)
-		resp = requests.get(FUTURES_BASE + path, headers=_headers(self.key, sig), json=body, timeout=10)
+		# Create signature from JSON string
+		json_body = json.dumps(body, separators=(",", ":"))
+		sig = hmac.new(bytes(self.secret, encoding="utf-8"), json_body.encode(), hashlib.sha256).hexdigest()
+		# Send the EXACT string that was signed (use data= not json=)
+		resp = requests.get(FUTURES_BASE + path, headers=_headers(self.key, sig), data=json_body, timeout=10)
 		resp.raise_for_status()
 		return resp.json()
 
