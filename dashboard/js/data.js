@@ -224,35 +224,23 @@ async function updateReadiness() {
     const resp = await fetch(API + '/api/signal/readiness?pairs=' + encodeURIComponent(pairsList.join(',')));
     const data = await resp.json();
     
-    console.log('Readiness API response:', data);
-    
-    if (!Array.isArray(data)) {
-      console.warn('Readiness data is not array:', data);
-      return;
-    }
-    
-    console.log(`Processing ${data.length} readiness items`);
+    if (!Array.isArray(data)) return;
     
     // Store readiness data globally for sorting
     data.forEach(item => {
       if (!item || !item.pair) return;
       pairReadiness[item.pair] = item;
       
-      console.log(`Pair ${item.pair}: readiness=${item.readiness}`);
-      
       const bar = document.querySelector(`[data-readiness="${item.pair}"]`);
       const val = document.querySelector(`[data-readiness-val="${item.pair}"]`);
-      if (!bar || !val) {
-        console.warn(`Elements not found for ${item.pair}`);
-        return;
-      }
+      if (!bar || !val) return;
       const pct = Math.min(100, Math.max(0, item.readiness || 0));
       bar.style.width = pct + '%';
       val.textContent = `${pct}%`;
     });
   } catch (e) {
     // ignore readiness errors
-    console.error('updateReadiness error:', e);
+    console.debug('updateReadiness error:', e);
   }
 }
 
