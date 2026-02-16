@@ -3,12 +3,16 @@
    ════════════════════════════════════════════════════════════════ */
 
 // Boot up the application
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', async function() {
   initCharts();
-  loadPairs();
-  fetchMode();
-  checkBotStatus();
-  fetchAll();
+  
+  // Load pairs FIRST and wait for completion
+  await loadPairs();
+  await fetchMode();
+  
+  // Then fetch all data
+  await checkBotStatus();
+  await fetchAll();
   
   // Set up refresh intervals
   setInterval(fetchAll, REFRESH_MS);
