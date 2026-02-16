@@ -58,42 +58,18 @@ class CoinDCXREST:
 		return resp.json()
 
 	def get_wallet(self):
-		"""Get futures wallet balance. Returns wallet data with USDT balance."""
-		# Correct CoinDCX Futures API endpoints for wallet/balance
-		wallet_paths = (
-			"/exchange/v1/derivatives/futures/data/wallet_balances",  # Primary endpoint
-			"/exchange/v1/derivatives/futures/user/wallet_balances",
-			"/exchange/v1/derivatives/futures/user/balance",
-			"/api/v1/derivatives/futures/data/wallet_balances",
-			"/exchange/v1/derivatives/futures/wallet_balances",
-		)
-
-		for path in wallet_paths:
-			for method in [self._post, self._get]:
-				try:
-					payload = method(path, {}) if method == self._post else method(path)
-					
-					# Log the response for debugging
-					logger.debug(f"Wallet API response from {path}: {payload}")
-				except (requests.HTTPError, requests.RequestException) as e:
-					logger.debug(f"Failed {path}: {e}")
-					continue
-
-				if isinstance(payload, dict):
-					status = str(payload.get("status", "")).lower()
-					message = str(payload.get("message", "")).lower()
-					code = str(payload.get("code", ""))
-					
-					# Skip 404s and continue trying
-					if status == "error" and ("not_found" in message or code == "404"):
-						continue
-					
-					# If we got a valid response (even if empty), return it
-					if status != "error":
-						return payload
-
-		logger.warning("All wallet endpoints failed, returning empty dict")
-		return {}
+		"""Get futures wallet balance. Returns array of wallet objects."""
+		# Official CoinDCX API endpoint from docs: https://docs.coindcx.com/#wallet-details
+		path = "/exchange/v1/derivatives/futures/wallets"
+		
+		try:
+			# Use GET method as per official docs
+			payload = self._get(path)
+			logger.info(f"Wallet API response: {payload}")
+			return payload
+		except (requests.HTTPError, requests.RequestException) as e:
+			logger.error(f"Wallet API failed: {e}")
+			return []
 
 	def get_positions(self):
 		return self._post("/exchange/v1/derivatives/futures/positions", {})

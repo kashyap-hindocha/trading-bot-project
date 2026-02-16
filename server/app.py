@@ -198,91 +198,47 @@ def _is_not_found_payload(payload):
 def _fetch_wallet_payload(key, secret, debug=False):
     import requests, hmac, hashlib, time, json
 
-    # Correct CoinDCX Futures API endpoints for wallet/balance
-    wallet_paths = (
-        "/exchange/v1/derivatives/futures/data/wallet_balances",  # Primary endpoint
-        "/exchange/v1/derivatives/futures/user/wallet_balances",
-        "/exchange/v1/derivatives/futures/user/balance",
-        "/api/v1/derivatives/futures/data/wallet_balances",
-        "/exchange/v1/derivatives/futures/wallet_balances",
-    )
+    # Official CoinDCX API endpoint from docs: https://docs.coindcx.com/#wallet-details
+    # Returns array of wallets: [{"currency_short_name": "USDT", "balance": "123.45", ...}, ...]
+    path = "/exchange/v1/derivatives/futures/wallets"
 
-    last_error = None
-    attempts = []
+    try:
+        # Create signature
+        body = {"timestamp": int(time.time() * 1000)}
+        sig = hmac.new(
+            secret.encode(),
+            json.dumps(body, separators=(",", ":")).encode(),
+            hashlib.sha256,
+        ).hexdigest()
 
-    for path in wallet_paths:
-        for method_name in ["POST", "GET"]:
-            try:
-                # Create fresh timestamp for each request
-                body = {"timestamp": int(time.time() * 1000)}
-                sig = hmac.new(
-                    secret.encode(),
-                    json.dumps(body, separators=(",", ":")).encode(),
-                    hashlib.sha256,
-                ).hexdigest()
+        headers = {
+            "Content-Type": "application/json",
+            "X-AUTH-APIKEY": key,
+            "X-AUTH-SIGNATURE": sig,
+        }
 
-                headers = {
-                    "Content-Type": "application/json",
-                    "X-AUTH-APIKEY": key,
-                    "X-AUTH-SIGNATURE": sig,
-                }
-
-                if method_name == "POST":
-                    resp = requests.post(
-                        f"https://api.coindcx.com{path}",
-                        headers=headers,
-                        json=body,
-                        timeout=5,
-                    )
-                else:
-                    # GET request - CoinDCX expects body as JSON even for GET
-                    resp = requests.get(
-                        f"https://api.coindcx.com{path}",
-                        headers=headers,
-                        json=body,
-                        timeout=5,
-                    )
-                
-                attempt_info = {
-                    "path": path,
-                    "method": method_name,
-                    "status": resp.status_code
-                }
-                
-                try:
-                    payload = resp.json()
-                    attempt_info["response"] = payload
-                except:
-                    attempt_info["response"] = resp.text[:200]
-                
-                attempts.append(attempt_info)
-                
-                # Skip 404 not found
-                if _is_not_found_payload(payload if isinstance(payload, dict) else {}):
-                    continue
-                
-                # Accept 2xx responses
-                if 200 <= resp.status_code < 300:
-                    if debug:
-                        return {"payload": payload, "attempts": attempts}
-                    return payload
-                
-                # Store last error for debugging
-                if resp.status_code >= 400:
-                    last_error = payload if isinstance(payload, dict) else {"error": resp.text[:200]}
-                    
-            except (requests.RequestException, ValueError) as e:
-                attempts.append({
-                    "path": path,
-                    "method": method_name,
-                    "error": str(e)
-                })
-                continue
-
-    if debug:
-        return {"error": "No valid endpoint found", "last_error": last_error, "attempts": attempts}
-    
-    return None
+        # GET request as per official docs
+        resp = requests.get(
+            f"https://api.coindcx.com{path}",
+            headers=headers,
+            json=body,
+            timeout=5,
+        )
+        
+        if 200 <= resp.status_code < 300:
+            payload = resp.json()
+            if debug:
+                return {"payload": payload, "status": resp.status_code}
+            return payload
+        else:
+            if debug:
+                return {"error": f"HTTP {resp.status_code}", "response": resp.text[:200]}
+            return None
+            
+    except Exception as e:
+        if debug:
+            return {"error": str(e)}
+        return None
 
 
 @app.route("/api/status")
