@@ -5,6 +5,7 @@
 // Boot up the application
 document.addEventListener('DOMContentLoaded', async function() {
   initCharts();
+  initCandleChart(); // Initialize lightweight-charts candlestick
   
   // Load pairs FIRST and wait for completion
   await loadPairs();
@@ -13,10 +14,12 @@ document.addEventListener('DOMContentLoaded', async function() {
   // Then fetch all data
   await checkBotStatus();
   await fetchAll();
+  updateCandleChart(); // Load initial candle data
   
   // Set up refresh intervals
   setInterval(fetchAll, REFRESH_MS);
   setInterval(checkBotStatus, REFRESH_MS);
   setInterval(updateReadiness, REFRESH_MS * 2);
   setInterval(updatePriceChart, REFRESH_MS * 2);
+  setInterval(updateCandleChart, 10000); // Refresh candlesticks every 10s
 });

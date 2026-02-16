@@ -643,6 +643,44 @@ def signal_readiness():
         return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
 
+@app.route("/api/candles")
+def get_candles():
+    """Fetch OHLCV candlestick data for a pair."""
+    try:
+        pair = request.args.get("pair", "B-BTC_USDT")
+        interval = request.args.get("interval", "5m")
+        limit = int(request.args.get("limit", 100))
+        
+        if limit > 500:
+            limit = 500
+        
+        client = CoinDCXREST("", "")
+        candles = client.get_candles(pair, interval, limit=limit)
+        
+        if not candles:
+            return jsonify([])
+        
+        # Format for chart
+        formatted = []
+        for c in candles:
+            try:
+                formatted.append({
+                    "timestamp": c.get("t", ""),
+                    "open": float(c.get("o", 0)),
+                    "high": float(c.get("h", 0)),
+                    "low": float(c.get("l", 0)),
+                    "close": float(c.get("c", 0)),
+                    "volume": float(c.get("v", 0))
+                })
+            except Exception:
+                pass
+        
+        return jsonify(formatted)
+    except Exception as e:
+        app.logger.error(f"Candles fetch failed: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.errorhandler(Exception)
 def handle_api_error(error):
     try:
