@@ -295,6 +295,25 @@
   }
   .panel-title::after { content: ''; flex: 1; height: 1px; background: var(--border); }
 
+  .panel-tools {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    margin-left: auto;
+  }
+  .panel-tools input,
+  .panel-tools select {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 6px 8px;
+  }
+  .panel-tools input:focus,
+  .panel-tools select:focus { outline: none; border-color: var(--accent); }
+
   .chart-wrap { position: relative; height: 200px; }
 
   .table-panel {
@@ -587,11 +606,36 @@
   </div>
 
   <div class="coin-manager">
-    <div class="panel-title">Coin Manager — Select pairs to trade</div>
+    <div class="panel-title">
+      Coin Manager — Select pairs to trade
+      <div class="panel-tools">
+        <input type="text" id="pairSearch" placeholder="Search pairs..." oninput="renderPairs()">
+        <select id="pairListLimit" onchange="renderPairs()">
+          <option value="80">Show 80</option>
+          <option value="150">Show 150</option>
+          <option value="1000">Show All</option>
+        </select>
+      </div>
+    </div>
     <div class="coin-grid" id="coinGrid">
       <div class="loading">Loading available pairs...</div>
     </div>
     <button class="apply-btn" id="applyCoinsBtn" onclick="applyPairChanges()" disabled>Apply Changes & Restart Bots</button>
+  </div>
+
+  <div class="chart-panel wide">
+    <div class="panel-title">
+      Live Price — Selected Pair
+      <div class="panel-tools">
+        <select id="pairSelect" onchange="onPairChange()"></select>
+      </div>
+    </div>
+    <div class="chart-wrap"><canvas id="priceChart"></canvas></div>
+  </div>
+
+  <div class="chart-panel side">
+    <div class="panel-title">Pair PnL</div>
+    <div class="chart-wrap"><canvas id="pairPnlChart"></canvas></div>
   </div>
 
   <div class="chart-panel wide">
@@ -790,6 +834,22 @@ function initCharts() {
   pnlChart = new Chart(document.getElementById('pnlChart'), {
     type: 'bar',
     data: { labels: [], datasets: [{ data: [], backgroundColor: ctx => ctx.raw >= 0 ? 'rgba(0,255,136,0.7)' : 'rgba(255,59,92,0.7)', borderRadius: 2 }] },
+    options: { ...baseOpts }
+  });
+
+  priceChart = new Chart(document.getElementById('priceChart'), {
+    type: 'line',
+    data: { labels: [], datasets: [
+      { label: 'Price', data: [], borderColor: '#00e5ff', backgroundColor: 'rgba(0,229,255,0.08)', borderWidth: 2, fill: true, tension: 0.2, pointRadius: 0 },
+      { label: 'Real Trades', type: 'scatter', data: [], pointRadius: 5, pointBackgroundColor: '#00ff88' },
+      { label: 'Paper Trades', type: 'scatter', data: [], pointRadius: 5, pointBackgroundColor: '#ffd230' },
+    ] },
+    options: { ...baseOpts, plugins: { legend: { display: true, labels: { color: '#4a6070', font: { family: 'Space Mono', size: 10 } } } } }
+  });
+
+  pairPnlChart = new Chart(document.getElementById('pairPnlChart'), {
+    type: 'line',
+    data: { labels: [], datasets: [{ data: [], borderColor: '#00ff88', backgroundColor: 'rgba(0,255,136,0.1)', borderWidth: 2, fill: true, tension: 0.25, pointRadius: 0 }] },
     options: { ...baseOpts }
   });
 }
@@ -1101,6 +1161,7 @@ fetchAll();
 setInterval(fetchAll, REFRESH_MS);
 setInterval(checkBotStatus, REFRESH_MS);
 setInterval(updateReadiness, REFRESH_MS * 2);
+setInterval(updatePriceChart, REFRESH_MS * 2);
 </script>
 </body>
 </html>

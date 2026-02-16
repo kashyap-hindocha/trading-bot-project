@@ -422,6 +422,26 @@ def paper_reset():
         return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
 
+@app.route("/api/candles")
+def candles():
+    try:
+        pair = request.args.get("pair", "").strip()
+        interval = request.args.get("interval", strategy.CONFIG["interval"]).strip()
+        limit = int(request.args.get("limit", 200))
+
+        if not pair:
+            return jsonify({"error": "pair is required"}), 400
+
+        limit = min(max(limit, 50), 300)
+        client = CoinDCXREST("", "")
+        data = client.get_candles(pair, interval, limit=limit)
+        return jsonify(data)
+    except Exception as e:
+        import traceback
+        app.logger.error(f"Candles failed: {e}")
+        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
+
+
 def _ema(values, period):
     if len(values) < period:
         return []
