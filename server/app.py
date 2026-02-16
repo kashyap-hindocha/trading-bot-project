@@ -630,12 +630,17 @@ def signal_readiness():
         for pair in pairs[:20]:
             try:
                 candles = client.get_candles(pair, strategy.CONFIG["interval"], limit=150)
+                app.logger.info(f"Pair {pair}: Got {len(candles)} candles, first candle keys: {candles[0].keys() if candles else 'none'}")
                 closes = [float(c.get("c", 0)) for c in candles if c.get("c") is not None]
+                app.logger.info(f"Pair {pair}: Extracted {len(closes)} close prices")
                 readiness = _compute_readiness(closes)
+                app.logger.info(f"Pair {pair}: Readiness = {readiness}")
                 if readiness:
                     results.append({"pair": pair, **readiness})
             except Exception as e:
-                app.logger.warning(f"Readiness failed for {pair}: {e}")
+                app.logger.error(f"Readiness failed for {pair}: {e}")
+                import traceback
+                app.logger.error(traceback.format_exc())
         return jsonify(results)
     except Exception as e:
         import traceback
