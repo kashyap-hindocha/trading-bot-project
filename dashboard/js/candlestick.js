@@ -63,6 +63,12 @@ function populatePairSelectors() {
       opt.textContent = p.pair.replace('B-', '').replace('_USDT', '');
       candleSelect.appendChild(opt);
     });
+    // Auto-select first pair
+    if (allPairs.length > 0 && !selectedCandlePair) {
+      candleSelect.value = allPairs[0].pair;
+      selectedCandlePair = allPairs[0].pair;
+      updateCandleChart(); // Load data immediately
+    }
   }
   
   if (priceSelect && priceSelect.children.length <= 1) {
@@ -91,36 +97,54 @@ async function updateCandleChart() {
     if (!Array.isArray(data) || data.length === 0) return;
 
     // Format data for lightweight-charts
-    const candleData = data.map(candle => {
+    const candleData = data.map((candle, index) => {
       try {
         // Parse timestamp - handle different formats
-        let timestamp = candle.timestamp;
-        if (!timestamp) return null;
-        const date = new Date(timestamp);
-        if (isNaN(date.getTime())) return null; // Skip invalid dates
-        return {
-          time: Math.floor(date.getTime() / 1000),
-          open: parseFloat(candle.open),
-          high: parseFloat(candle.high),
-          low: parseFloat(candle.low),
-          close: parseFloat(candle.close),
-        };
+        let time = null;
+        
+        if (candle.timestamp) {
+          const date = new Date(candle.timestamp);
+          if (!isNaN(date.getTime())) {
+            time = Math.floor(date.getTime() / 1000);
+          }
+        }
+        
+        // Fallback: use index-based time if timestamp invalid
+        if (!time) {
+          // Generate approximate time 5 minutes apart
+          const now = Math.floor(Date.now() / 1000);
+          time = now - (data.length - index - 1) * 300; // 5m intervals backwards
+        }
+        
+        const o = parseFloat(candle.open);
+        const h = parseFloat(candle.high);
+        const l = parseFloat(candle.low);
+        const c = parseFloat(candle.close);
+        
+        // Skip if no valid OHLC data
+        if (isNaN(o) || isNaN(h) || isNaN(l) || isNaN(c)) return null;
+        
+        return { time, open: o, high: h, low: l, close: c };
       } catch (e) {
-        return null; // Skip if parsing fails
+        console.error('Candle parse error:', e, candle);
+        return null;
       }
     }).filter(c => c !== null); // Remove invalid entries
 
     // Set data on series
-    candleSeries.setData(candleData);
-    candleChart.timeScale().fitContent();
-
-    // Update info with current price and confidence
     if (candleData.length > 0) {
+      candleSeries.setData(candleData);
+      candleChart.timeScale().fitContent();
+      candleChart.priceScale().applyOptions({ autoScale: true });
+
+      // Update info with current price and confidence
       const last = candleData[candleData.length - 1];
       const baseCoin = pair.replace('B-', '').replace('_USDT', '');
       const readiness = pairReadiness[pair]?.readiness || 0;
       document.getElementById('candleInfo').textContent = 
         `${baseCoin} | O: ${last.open.toFixed(4)} H: ${last.high.toFixed(4)} L: ${last.low.toFixed(4)} C: ${last.close.toFixed(4)} | Confidence: ${readiness.toFixed(1)}%`;
+    } else {
+      console.warn('No valid candle data after parsing');
     }
   } catch (e) {
     console.error('Candlestick chart error:', e);
