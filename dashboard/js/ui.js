@@ -150,8 +150,13 @@ function renderPairs() {
     `;
   }).join('');
 
-  updateReadiness();
   renderFavorites();
+  updateReadiness(); // Always update readiness after rendering
+}
+
+// Wrapper for pagination changes
+function onPairsPageChange() {
+  renderPairs();
 }
 
 function renderFavorites() {

@@ -159,11 +159,17 @@ async function loadPairs() {
       return;
     }
 
+    // Set pairsList from allPairs before updateReadiness
+    const limit = parseInt(document.getElementById('pairListLimit')?.value || '50', 10);
+    pairsList = allPairs.slice(0, limit).map(p => p.pair);
+
+    // Update readiness FIRST, then render with data
+    await updateReadiness();
+    
     renderPairs();
     renderFavorites();
     updatePairSelect();
     document.getElementById('applyCoinsBtn').disabled = false;
-    updateReadiness();
   } catch (e) {
     console.error('Error loading pairs:', e);
     document.getElementById('coinGrid').innerHTML = '<div class="loading">Error loading pairs</div>';
