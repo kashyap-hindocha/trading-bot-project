@@ -5,8 +5,8 @@
 let candleChart = null;
 let candleSeries = null;
 let currentTimeframe = '5m';
-let candleData = {};
-let selectedCandlePair = 'B-BTC_USDT';
+let selectedCandlePair = '';
+let priceChartPair = '';
 
 // Initialize candlestick chart with lightweight-charts
 function initCandleChart() {
@@ -33,6 +33,7 @@ function initCandleChart() {
     rightPriceScale: {
       textColor: '#4a6070',
       autoScale: true,
+      borderColor: '#2a3a45'
     }
   });
 
@@ -48,10 +49,38 @@ function initCandleChart() {
   candleChart.timeScale().fitContent();
 }
 
+// Populate pair dropdowns
+function populatePairSelectors() {
+  if (!allPairs || allPairs.length === 0) return;
+  
+  const candleSelect = document.getElementById('candlePairSelect');
+  const priceSelect = document.getElementById('priceChartPairSelect');
+  
+  if (candleSelect && candleSelect.children.length <= 1) {
+    allPairs.forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.pair;
+      opt.textContent = p.pair.replace('B-', '').replace('_USDT', '');
+      candleSelect.appendChild(opt);
+    });
+  }
+  
+  if (priceSelect && priceSelect.children.length <= 1) {
+    allPairs.forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.pair;
+      opt.textContent = p.pair.replace('B-', '').replace('_USDT', '');
+      priceSelect.appendChild(opt);
+    });
+  }
+}
+
 // Fetch candles from server and update chart
 async function updateCandleChart() {
   try {
-    const pair = selectedCandlePair || 'B-BTC_USDT';
+    if (!selectedCandlePair) return;
+    
+    const pair = selectedCandlePair;
     const interval = currentTimeframe;
     
     // Fetch candles from API
@@ -63,7 +92,7 @@ async function updateCandleChart() {
 
     // Format data for lightweight-charts
     const candleData = data.map(candle => ({
-      time: Math.floor(new Date(candle.timestamp).getTime() / 1000), // Unix timestamp in seconds
+      time: Math.floor(new Date(candle.timestamp).getTime() / 1000),
       open: parseFloat(candle.open),
       high: parseFloat(candle.high),
       low: parseFloat(candle.low),
@@ -74,14 +103,36 @@ async function updateCandleChart() {
     candleSeries.setData(candleData);
     candleChart.timeScale().fitContent();
 
-    // Update info
+    // Update info with current price and confidence
     if (candleData.length > 0) {
       const last = candleData[candleData.length - 1];
+      const baseCoin = pair.replace('B-', '').replace('_USDT', '');
+      const readiness = pairReadiness[pair]?.readiness || 0;
       document.getElementById('candleInfo').textContent = 
-        `${pair} | O: ${last.open.toFixed(4)} H: ${last.high.toFixed(4)} L: ${last.low.toFixed(4)} C: ${last.close.toFixed(4)}`;
+        `${baseCoin} | O: ${last.open.toFixed(4)} H: ${last.high.toFixed(4)} L: ${last.low.toFixed(4)} C: ${last.close.toFixed(4)} | Confidence: ${readiness.toFixed(1)}%`;
     }
   } catch (e) {
     console.error('Candlestick chart error:', e);
+  }
+}
+
+// Handle pair selection for candlestick
+function onCandlePairSelect() {
+  const select = document.getElementById('candlePairSelect');
+  if (select && select.value) {
+    selectedCandlePair = select.value;
+    updateCandleChart();
+  }
+}
+
+// Handle pair selection for price chart
+function onPriceChartPairChange() {
+  const select = document.getElementById('priceChartPairSelect');
+  if (select && select.value) {
+    priceChartPair = select.value;
+    const baseCoin = select.value.replace('B-', '').replace('_USDT', '');
+    const readiness = pairReadiness[select.value]?.readiness || 0;
+    document.getElementById('priceChartInfo').textContent = `${baseCoin} | Confidence: ${readiness.toFixed(1)}%`;
   }
 }
 
@@ -94,15 +145,7 @@ function onTimeframeChange() {
   }
 }
 
-// Update on pair selection
-function onCandlePairChange(pair) {
-  if (pair) {
-    selectedCandlePair = pair;
-    updateCandleChart();
-  }
-}
-
 // Auto-refresh candlestick data
 setInterval(() => {
-  if (candleChart) updateCandleChart();
+  if (candleChart && selectedCandlePair) updateCandleChart();
 }, 10000); // Update every 10 seconds

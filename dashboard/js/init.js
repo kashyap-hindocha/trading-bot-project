@@ -9,6 +9,7 @@ document.addEventListener('DOMContentLoaded', async function() {
   
   // Load pairs FIRST and wait for completion
   await loadPairs();
+  populatePairSelectors(); // Populate pair dropdowns
   await fetchMode();
   
   // Then fetch all data
