@@ -4,9 +4,13 @@ sys.path.insert(0, '/home/ubuntu/trading-bot/bot')
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
+from datetime import datetime, timezone, timedelta
 import db
 from coindcx import CoinDCXREST
 import strategy
+
+# IST timezone (UTC+5:30)
+IST = timezone(timedelta(hours=5, minutes=30))
 
 app = Flask(__name__)
 CORS(app)
@@ -370,7 +374,18 @@ def paper_equity():
 @app.route("/api/logs")
 def logs():
     try:
-        return jsonify(db.get_recent_logs(limit=50))
+        logs_data = db.get_recent_logs(limit=50)
+        # Convert UTC times to IST
+        for log in logs_data:
+            if log.get('created_at'):
+                try:
+                    # Parse UTC time and convert to IST
+                    utc_time = datetime.fromisoformat(log['created_at'].replace('Z', '+00:00'))
+                    ist_time = utc_time.astimezone(IST)
+                    log['created_at'] = ist_time.isoformat()
+                except Exception:
+                    pass  # Keep original time if conversion fails
+        return jsonify(logs_data)
     except Exception as e:
         app.logger.error(f"Error fetching logs: {e}")
         return jsonify([])
@@ -883,7 +898,7 @@ def pairs_active():
             "active_pairs": list(pairs_trading.values()),
             "total_active_pairs": len(pairs_trading),
             "total_open_positions": len(all_trades),
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(IST).isoformat()
         })
     except Exception as e:
         app.logger.error(f"Error fetching active pairs: {e}")
@@ -960,7 +975,7 @@ def trades_by_pair():
             "mode": mode,
             "pairs_stats": list(pairs_stats.values()),
             "trading_pairs": len(pairs_stats),
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(IST).isoformat()
         })
     except Exception as e:
         app.logger.error(f"Error fetching trades by pair: {e}")

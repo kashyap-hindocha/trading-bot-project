@@ -108,8 +108,18 @@ function renderLogs(logs) {
 // ── Pair Management ──
 function renderPairs() {
   const grid = document.getElementById('coinGrid');
+  if (!grid) {
+    console.error('coinGrid element not found');
+    return;
+  }
+  
   const query = (document.getElementById('pairSearch')?.value || '').toUpperCase();
   const limit = parseInt(document.getElementById('pairListLimit')?.value || '50', 10);
+  
+  if (!allPairs || allPairs.length === 0) {
+    grid.innerHTML = '<div class="loading">No pairs available</div>';
+    return;
+  }
   
   // Filter pairs by search query
   let filtered = allPairs.filter(p => p.pair.includes(query));

@@ -218,13 +218,16 @@ async function applyPairChanges() {
 }
 
 async function updateReadiness() {
-  if (!pairsList.length) return;
+  if (!pairsList || !pairsList.length) return;
   try {
     const resp = await fetch(API + '/api/signal/readiness?pairs=' + encodeURIComponent(pairsList.join(',')));
     const data = await resp.json();
     
+    if (!Array.isArray(data)) return;
+    
     // Store readiness data globally for sorting
     data.forEach(item => {
+      if (!item || !item.pair) return;
       pairReadiness[item.pair] = item;
       
       const bar = document.querySelector(`[data-readiness="${item.pair}"]`);
@@ -236,6 +239,7 @@ async function updateReadiness() {
     });
   } catch (e) {
     // ignore readiness errors
+    console.debug('updateReadiness error:', e);
   }
 }
 
