@@ -255,6 +255,99 @@
   .log-level.WARNING { color: var(--yellow); }
   .log-level.ERROR   { color: var(--red); }
 
+  /* Coin Manager */
+  .coin-manager {
+    grid-column: span 4;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    padding: 20px;
+  }
+  .coin-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 12px;
+    margin-top: 16px;
+  }
+  .coin-card {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    padding: 14px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    transition: all 0.2s;
+  }
+  .coin-card:hover { border-color: var(--accent); }
+  .coin-card.enabled { border-color: var(--green); background: rgba(0,255,136,0.03); }
+  
+  .coin-toggle {
+    width: 36px;
+    height: 20px;
+    background: var(--border);
+    border-radius: 10px;
+    position: relative;
+    cursor: pointer;
+    transition: background 0.2s;
+    flex-shrink: 0;
+  }
+  .coin-toggle.on { background: var(--green); }
+  .coin-toggle::after {
+    content: '';
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    background: var(--text);
+    border-radius: 50%;
+    top: 2px;
+    left: 2px;
+    transition: transform 0.2s;
+  }
+  .coin-toggle.on::after { transform: translateX(16px); }
+  
+  .coin-info { flex: 1; }
+  .coin-name {
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: 0.05em;
+    color: var(--text);
+  }
+  .coin-params {
+    display: flex;
+    gap: 10px;
+    margin-top: 4px;
+  }
+  .coin-input {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    padding: 3px 6px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text);
+    width: 70px;
+  }
+  .coin-input:focus { outline: none; border-color: var(--accent); }
+  
+  .apply-btn {
+    padding: 10px 24px;
+    background: rgba(0,229,255,0.12);
+    color: var(--accent);
+    border: 1px solid rgba(0,229,255,0.35);
+    border-radius: 2px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all 0.2s;
+    margin-top: 16px;
+  }
+  .apply-btn:hover { background: rgba(0,229,255,0.22); }
+  .apply-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
   .loading { color: var(--muted); font-size: 12px; padding: 20px 0; text-align: center; }
 
   /* Toast notification */
@@ -320,6 +413,14 @@
     </div>
   </div>
 
+  <div class="coin-manager">
+    <div class="panel-title">Coin Manager — Select pairs to trade</div>
+    <div class="coin-grid" id="coinGrid">
+      <div class="loading">Loading available pairs...</div>
+    </div>
+    <button class="apply-btn" id="applyCoinsBtn" onclick="applyPairChanges()" disabled>Apply Changes & Restart Bots</button>
+  </div>
+
   <div class="chart-panel wide">
     <div class="panel-title">Equity Curve</div>
     <div class="chart-wrap"><canvas id="equityChart"></canvas></div>
@@ -354,6 +455,7 @@
   </div>
 </main>
 
+let pairConfigs = {}; // Store current pair configurations
 <div class="toast" id="toast"></div>
 
 <script>
@@ -548,7 +650,127 @@ function renderLogs(logs) {
     </div>
   `).join('');
 }
+Coin Manager ──────────────────────────
+async function loadPairs() {
+  try {
+loadPairs();
+    const [available, configs] = await Promise.all([
+      fetch(API + '/api/pairs/available').then(r => r.json()),
+      fetch(API + '/api/pairs/config').then(r => r.json())
+    ]);
 
+    // Build config map
+    const configMap = {};
+    configs.forEach(c => {
+      configMap[c.pair] = { enabled: c.enabled, leverage: c.leverage, quantity: c.quantity };
+    });
+
+    // Render coin grid
+    const grid = document.getElementById('coinGrid');
+    if (!available || !available.length) {
+      grid.innerHTML = '<div class="loading">No pairs available</div>';
+      return;
+    }
+
+    // Filter to common USDT pairs
+    const popularPairs = ['B-BTC_USDT', 'B-ETH_USDT', 'B-SOL_USDT', 'B-XRP_USDT', 'B-BNB_USDT', 
+                          'B-ADA_USDT', 'B-DOGE_USDT', 'B-MATIC_USDT', 'B-DOT_USDT', 'B-AVAX_USDT'];
+    const pairs = available.filter(p => popularPairs.includes(p.pair)).slice(0, 12);
+
+    grid.innerHTML = pairs.map(p => {
+      const cfg = configMap[p.pair] || { enabled: 0, leverage: 5, quantity: 0.001 };
+      pairConfigs[p.pair] = cfg;
+      
+      const baseCoin = p.pair.replace('B-', '').replace('_USDT', '');
+      const enabled = cfg.enabled === 1;
+      
+      return `
+        <div class="coin-card ${enabled ? 'enabled' : ''}" data-pair="${p.pair}">
+          <div class="coin-toggle ${enabled ? 'on' : ''}" onclick="togglePair('${p.pair}')"></div>
+          <div class="coin-info">
+            <div class="coin-name">${baseCoin}/USDT</div>
+            <div class="coin-params">
+              <input type="number" class="coin-input" placeholder="Lev" 
+                     value="${cfg.leverage}" min="1" max="20" 
+                     onchange="updatePairConfig('${p.pair}', 'leverage', this.value)">
+              <input type="number" class="coin-input" placeholder="Qty" 
+                     value="${cfg.quantity}" step="0.001" min="0.001"
+                     onchange="updatePairConfig('${p.pair}', 'quantity', this.value)">
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    document.getElementById('applyCoinsBtn').disabled = false;
+  } catch (e) {
+    console.error('Error loading pairs:', e);
+    document.getElementById('coinGrid').innerHTML = '<div class="loading">Error loading pairs</div>';
+  }
+}
+
+function togglePair(pair) {
+  const cfg = pairConfigs[pair];
+  cfg.enabled = cfg.enabled === 1 ? 0 : 1;
+  
+  const card = document.querySelector(`[data-pair="${pair}"]`);
+  const toggle = card.querySelector('.coin-toggle');
+  
+  if (cfg.enabled) {
+    card.classList.add('enabled');
+    toggle.classList.add('on');
+  } else {
+    card.classList.remove('enabled');
+    toggle.classList.remove('on');
+  }
+}
+
+function updatePairConfig(pair, field, value) {
+  pairConfigs[pair][field] = field === 'leverage' ? parseInt(value) : parseFloat(value);
+}
+
+async function applyPairChanges() {
+  const btn = document.getElementById('applyCoinsBtn');
+  btn.disabled = true;
+  btn.textContent = 'Applying...';
+
+  try {
+    const pairs = Object.keys(pairConfigs).map(pair => ({
+      pair,
+      enabled: pairConfigs[pair].enabled,
+      leverage: pairConfigs[pair].leverage,
+      quantity: pairConfigs[pair].quantity
+    }));
+
+    const resp = await fetch(API + '/api/pairs/config/bulk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pairs })
+    });
+
+    const data = await resp.json();
+    if (data.success) {
+      showToast('Pair settings updated! Restart bots to apply.', 'success');
+      
+      // Auto-restart if bot is running
+      if (botRunning) {
+        setTimeout(async () => {
+          await fetch(API + '/api/bot/stop', { method: 'POST' });
+          setTimeout(() => fetch(API + '/api/bot/start', { method: 'POST' }), 2000);
+        }, 1000);
+      }
+    } else {
+      showToast(data.error || 'Failed to update settings', 'error');
+    }
+  } catch (e) {
+    showToast('Request failed', 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Apply Changes & Restart Bots';
+  }
+}
+
+// ── 
 // ── Boot ──────────────────────────────────
 initCharts();
 checkBotStatus();

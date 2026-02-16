@@ -57,6 +57,18 @@ def init_db():
         )
     """)
 
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS pair_config (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            pair       TEXT UNIQUE NOT NULL,
+            enabled    INTEGER DEFAULT 0,   -- 0=disabled, 1=enabled
+            leverage   INTEGER DEFAULT 5,
+            quantity   REAL DEFAULT 0.001,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now'))
+        )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -162,3 +174,50 @@ def get_recent_logs(limit=50):
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+# ── Pair Config ──────────────────────────────
+def get_all_pair_configs():
+    """Get all pair configurations."""
+    conn = get_conn()
+    rows = conn.execute("SELECT * FROM pair_config ORDER BY pair ASC").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_enabled_pairs():
+    """Get only enabled pair configurations."""
+    conn = get_conn()
+    rows = conn.execute("SELECT * FROM pair_config WHERE enabled=1 ORDER BY pair ASC").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def upsert_pair_config(pair: str, enabled: int, leverage: int, quantity: float):
+    """Insert or update pair configuration."""
+    conn = get_conn()
+    conn.execute("""
+        INSERT INTO pair_config (pair, enabled, leverage, quantity, updated_at)
+        VALUES (?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(pair) DO UPDATE SET
+            enabled=excluded.enabled,
+            leverage=excluded.leverage,
+            quantity=excluded.quantity,
+            updated_at=datetime('now')
+    """, (pair, enabled, leverage, quantity))
+    conn.commit()
+    conn.close()
+
+
+def update_pair_enabled(pair: str, enabled: int):
+    """Toggle pair enabled/disabled status."""
+    conn = get_conn()
+    conn.execute("""
+        INSERT INTO pair_config (pair, enabled, updated_at)
+        VALUES (?, ?, datetime('now'))
+        ON CONFLICT(pair) DO UPDATE SET
+            enabled=excluded.enabled,
+            updated_at=datetime('now')
+    """, (pair, enabled))
+    conn.commit()
+    conn.close()

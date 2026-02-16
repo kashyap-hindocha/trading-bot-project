@@ -438,5 +438,98 @@ def bot_status():
         return jsonify({"running": False})
 
 
+# ── Pair Management ──────────────────────────
+@app.route("/api/pairs/available")
+def pairs_available():
+    """Get all available trading pairs from CoinDCX."""
+    try:
+        from dotenv import load_dotenv
+        load_dotenv("/home/ubuntu/trading-bot/.env")
+        key = os.getenv("COINDCX_API_KEY")
+        secret = os.getenv("COINDCX_API_SECRET")
+        
+        if not key or not secret:
+            return jsonify({"error": "API credentials not configured"}), 500
+        
+        client = CoinDCXREST(key, secret)
+        instruments = client.get_active_instruments()
+        
+        # Filter for futures pairs and format
+        pairs = []
+        for inst in instruments:
+            if isinstance(inst, dict):
+                symbol = inst.get("symbol", inst.get("pair", ""))
+                if symbol and "USDT" in symbol:  # Focus on USDT pairs
+                    pairs.append({
+                        "pair": symbol,
+                        "base": symbol.split("_")[0] if "_" in symbol else symbol.replace("USDT", ""),
+                        "quote": "USDT"
+                    })
+        
+        return jsonify(pairs)
+    except Exception as e:
+        app.logger.error(f"Error fetching pairs: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/pairs/config")
+def pairs_config():
+    """Get all pair configurations."""
+    try:
+        configs = db.get_all_pair_configs()
+        return jsonify(configs)
+    except Exception as e:
+        app.logger.error(f"Error fetching pair configs: {e}")
+        return jsonify([])
+
+
+@app.route("/api/pairs/config/update", methods=["POST"])
+def pairs_config_update():
+    """Update pair configuration."""
+    try:
+        from flask import request
+        data = request.get_json()
+        
+        pair = data.get("pair")
+        enabled = int(data.get("enabled", 0))
+        leverage = int(data.get("leverage", 5))
+        quantity = float(data.get("quantity", 0.001))
+        
+        if not pair:
+            return jsonify({"error": "Pair is required"}), 400
+        
+        db.upsert_pair_config(pair, enabled, leverage, quantity)
+        db.log_event("INFO", f"Updated config for {pair}: enabled={enabled}, leverage={leverage}, qty={quantity}")
+        
+        return jsonify({"success": True, "message": f"Updated {pair} configuration"})
+    except Exception as e:
+        app.logger.error(f"Error updating pair config: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/pairs/config/bulk", methods=["POST"])
+def pairs_config_bulk():
+    """Bulk update pair configurations."""
+    try:
+        from flask import request
+        data = request.get_json()
+        pairs = data.get("pairs", [])
+        
+        for pair_data in pairs:
+            pair = pair_data.get("pair")
+            enabled = int(pair_data.get("enabled", 0))
+            leverage = int(pair_data.get("leverage", 5))
+            quantity = float(pair_data.get("quantity", 0.001))
+            
+            if pair:
+                db.upsert_pair_config(pair, enabled, leverage, quantity)
+        
+        db.log_event("INFO", f"Bulk updated {len(pairs)} pair configurations")
+        return jsonify({"success": True, "message": f"Updated {len(pairs)} pairs"})
+    except Exception as e:
+        app.logger.error(f"Error bulk updating pairs: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False)

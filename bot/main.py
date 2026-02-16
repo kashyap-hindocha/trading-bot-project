@@ -26,6 +26,15 @@ from coindcx import CoinDCXREST, CoinDCXSocket
 
 load_dotenv("/home/ubuntu/trading-bot/.env")
 
+# ── Parse command-line arguments ─────────────
+PAIR     = strategy.CONFIG["pair"]      # Default pair
+INTERVAL = strategy.CONFIG["interval"]
+
+if len(sys.argv) > 1:
+    # Allow overriding pair from command line: python main.py B-ETH_USDT
+    PAIR = sys.argv[1]
+    logger.info(f"Using pair from command line: {PAIR}")
+
 # ── Logging ──────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
@@ -43,9 +52,6 @@ API_SECRET = os.getenv("COINDCX_API_SECRET")
 
 rest   = CoinDCXREST(API_KEY, API_SECRET)
 socket = CoinDCXSocket(API_KEY, API_SECRET)
-
-PAIR     = strategy.CONFIG["pair"]
-INTERVAL = strategy.CONFIG["interval"]
 
 # In-memory candle buffer (last 200 candles)
 candle_buffer: list[dict] = []
@@ -89,8 +95,7 @@ def _update_candle(data: dict):
         _run_strategy(candle["close"])
 
 
-# ─────────────────────────────────────────────
-#  Strategy execution
+# ── Strategy execution
 # ─────────────────────────────────────────────
 def _run_strategy(current_price: float):
     # Check max open trades limit
@@ -108,8 +113,19 @@ def _run_strategy(current_price: float):
     try:
         side       = "buy" if signal == "BUY" else "sell"
         order_type = "market_order"
-        quantity   = strategy.CONFIG["quantity"]
-        leverage   = strategy.CONFIG["leverage"]
+        
+        # Get pair-specific config from database, fallback to strategy defaults
+        pair_config = None
+        try:
+            all_configs = db.get_all_pair_configs()
+            pair_config = next((c for c in all_configs if c["pair"] == PAIR), None)
+        except:
+            pass
+        
+        quantity = pair_config["quantity"] if pair_config else strategy.CONFIG["quantity"]
+        leverage = pair_config["leverage"] if pair_config else strategy.CONFIG["leverage"]
+        
+        logger.info(f"Using config for {PAIR}: leverage={leverage}x, quantity={quantity}")
 
         # Place entry order
         order = rest.place_order(PAIR, side, order_type, quantity, leverage=leverage)

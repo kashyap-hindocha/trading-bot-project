@@ -1,5 +1,5 @@
 [Unit]
-Description=Trading Bot
+Description=Trading Bot Manager (Multi-Pair)
 After=network.target
 
 [Service]
@@ -7,7 +7,7 @@ Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/trading-bot
 Environment=PATH=/home/ubuntu/trading-bot/venv/bin
-ExecStart=/home/ubuntu/trading-bot/venv/bin/python bot/main.py
+ExecStart=/home/ubuntu/trading-bot/venv/bin/python bot/bot_manager.py
 Restart=always
 RestartSec=10
 StandardOutput=journal
