@@ -59,10 +59,43 @@ pair_data = {}
 #  Initialization Functions
 # ─────────────────────────────────────────────
 def _init_pair_data():
-    """Load enabled pairs and initialize their state."""
+    """Load pairs based on mode (SINGLE/MULTI) and initialize their state."""
     global pair_data
     try:
-        enabled_pairs = db.get_enabled_pairs()
+        # Initialize pair mode if not set
+        db.init_pair_mode_if_missing()
+        
+        # Get current pair mode
+        mode_config = db.get_pair_mode()
+        pair_mode = mode_config.get("pair_mode", "MULTI")
+        selected_pair = mode_config.get("selected_pair")
+        
+        logger.info(f"Pair mode: {pair_mode}" + (f" (selected: {selected_pair})" if selected_pair else ""))
+        
+        if pair_mode == "SINGLE":
+            # Single pair mode - load only the selected pair
+            if not selected_pair:
+                logger.error("SINGLE mode selected but no pair specified. Defaulting to MULTI mode.")
+                db.set_pair_mode("MULTI")
+                enabled_pairs = db.get_enabled_pairs()
+            else:
+                # Get config for the selected pair
+                pair_config = db.get_pair_config(selected_pair)
+                if pair_config:
+                    enabled_pairs = [pair_config]
+                    logger.info(f"Trading SINGLE pair: {selected_pair}")
+                else:
+                    # Pair not found, create default config
+                    logger.warning(f"Config not found for {selected_pair}, creating default")
+                    db.upsert_pair_config(selected_pair, 1, 5, 0.001, 300.0)
+                    pair_config = db.get_pair_config(selected_pair)
+                    enabled_pairs = [pair_config] if pair_config else []
+        else:
+            # Multi pair mode - load all enabled pairs
+            enabled_pairs = db.get_enabled_pairs()
+            logger.info(f"Trading MULTI pairs: {len(enabled_pairs)} pairs enabled")
+        
+        # Initialize pair_data dictionary
         pair_data = {
             p["pair"]: {
                 "candles": [],
@@ -71,7 +104,8 @@ def _init_pair_data():
             }
             for p in enabled_pairs
         }
-        logger.info(f"Initialized {len(pair_data)} enabled pairs: {list(pair_data.keys())}")
+        
+        logger.info(f"Initialized {len(pair_data)} pairs: {list(pair_data.keys())}")
         return list(pair_data.keys())
     except Exception as e:
         logger.error(f"Error loading pair configs: {e}")

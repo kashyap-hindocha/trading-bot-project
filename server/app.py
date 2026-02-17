@@ -1070,5 +1070,124 @@ def trades_by_pair():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/pair_mode", methods=["GET", "POST"])
+def pair_mode():
+    """Get or set pair trading mode (SINGLE/MULTI) and selected pair."""
+    if request.method == "GET":
+        try:
+            mode_data = db.get_pair_mode()
+            return jsonify(mode_data)
+        except Exception as e:
+            app.logger.error(f"Error getting pair mode: {e}")
+            return jsonify({"pair_mode": "MULTI", "selected_pair": None})
+    
+    # POST - Set pair mode
+    try:
+        data = request.get_json() or {}
+        mode = str(data.get("pair_mode", "MULTI")).upper()
+        selected_pair = data.get("selected_pair")
+        
+        if mode not in ("SINGLE", "MULTI"):
+            return jsonify({"error": "pair_mode must be SINGLE or MULTI"}), 400
+        
+        if mode == "SINGLE" and not selected_pair:
+            return jsonify({"error": "selected_pair is required for SINGLE mode"}), 400
+        
+        db.set_pair_mode(mode, selected_pair)
+        db.log_event("INFO", f"Pair mode set to {mode}" + (f" with pair {selected_pair}" if selected_pair else ""))
+        
+        return jsonify({
+            "success": True,
+            "pair_mode": mode,
+            "selected_pair": selected_pair
+        })
+    except Exception as e:
+        app.logger.error(f"Error setting pair mode: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/pair_signals")
+def pair_signals():
+    """Get signal strength for all pairs to enable smart sorting."""
+    try:
+        # Get all pair configs
+        all_pairs = db.get_all_pair_configs()
+        
+        if not all_pairs:
+            return jsonify([])
+        
+        # Import strategy to calculate signal strength
+        try:
+            import strategy
+        except Exception as e:
+            app.logger.error(f"Failed to import strategy: {e}")
+            return jsonify({"error": "Strategy module not available"}), 500
+        
+        client = CoinDCXREST("", "")
+        results = []
+        
+        # Get active strategy config for interval
+        active_strategy = None
+        interval = "5m"  # default
+        try:
+            if STRATEGY_MANAGER_LOADED:
+                active_strategy = strategy_manager.strategy_manager.get_active_strategy()
+                if active_strategy:
+                    interval = active_strategy.get_config().get("interval", "5m")
+        except Exception:
+            pass
+        
+        for pair_config in all_pairs[:50]:  # Limit to 50 pairs max
+            pair = pair_config.get("pair")
+            if not pair:
+                continue
+            
+            try:
+                # Fetch candles for this pair
+                candles = client.get_candles(pair, interval, limit=150)
+                
+                if not candles or len(candles) < 50:
+                    results.append({
+                        "pair": pair,
+                        "signal_strength": 0.0,
+                        "enabled": pair_config.get("enabled", 0),
+                        "leverage": pair_config.get("leverage", 5),
+                        "quantity": pair_config.get("quantity", 0.001),
+                        "inr_amount": pair_config.get("inr_amount", 300.0)
+                    })
+                    continue
+                
+                # Calculate signal strength
+                signal_strength = strategy.calculate_signal_strength(candles)
+                
+                results.append({
+                    "pair": pair,
+                    "signal_strength": signal_strength,
+                    "enabled": pair_config.get("enabled", 0),
+                    "leverage": pair_config.get("leverage", 5),
+                    "quantity": pair_config.get("quantity", 0.001),
+                    "inr_amount": pair_config.get("inr_amount", 300.0),
+                    "last_price": candles[-1].get("close") if candles else None
+                })
+            except Exception as e:
+                app.logger.warning(f"Signal strength calculation failed for {pair}: {e}")
+                results.append({
+                    "pair": pair,
+                    "signal_strength": 0.0,
+                    "enabled": pair_config.get("enabled", 0),
+                    "leverage": pair_config.get("leverage", 5),
+                    "quantity": pair_config.get("quantity", 0.001),
+                    "inr_amount": pair_config.get("inr_amount", 300.0)
+                })
+        
+        # Sort by signal strength (highest first)
+        results.sort(key=lambda x: x["signal_strength"], reverse=True)
+        
+        return jsonify(results)
+    except Exception as e:
+        app.logger.error(f"Error fetching pair signals: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False)
