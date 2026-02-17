@@ -221,26 +221,6 @@
       </div>
     </div>
 
-    <!-- Coin Manager — Pair Listing (Sorted by Confidence) -->
-    <div class="coin-manager">
-      <div class="panel-title">
-        📈 All Pairs (Sorted by Confidence - Closest to 90% First)
-        <div class="panel-tools">
-          <input type="text" id="pairSearch" placeholder="Search pairs..." oninput="onPairsPageChange()">
-          <select id="pairListLimit" onchange="onPairsPageChange()">
-            <option value="10">Top 10</option>
-            <option value="20">Top 20</option>
-            <option value="30">Top 30</option>
-            <option value="50" selected>Top 50</option>
-            <option value="100">Top 100</option>
-            <option value="1000">All</option>
-          </select>
-        </div>
-      </div>
-      <div class="coin-grid" id="coinGrid">
-        <div class="loading">Loading available pairs...</div>
-      </div>
-    </div>
 
     <!-- Trade History Table -->
     <div class="table-panel">

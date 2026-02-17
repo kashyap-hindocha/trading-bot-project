@@ -13,7 +13,7 @@ document.addEventListener('DOMContentLoaded', async function () {
   await fetchMode();
   await loadStrategies();
 
-  // Load pair mode
+  // Load pair mode (after pairs are loaded)
   await loadPairMode();
 
   // Then fetch all data
