@@ -1,6 +1,9 @@
 /* ════════════════════════════════════════════════════════════════
-   PAIR MODE MANAGEMENT
+   PAIR MODE MANAGEMENT - FIXED VERSION
    ════════════════════════════════════════════════════════════════ */
+
+// State to track if showing all pairs or just top 10
+let showingAllPairs = false;
 
 // Load current pair mode from API
 async function loadPairMode() {
@@ -21,6 +24,15 @@ async function loadPairMode() {
 // Set pair mode (SINGLE or MULTI)
 async function setPairMode(mode) {
     try {
+        // FIX #2: If switching to SINGLE and no pair selected, auto-select first pair
+        if (mode === 'SINGLE' && !selectedSinglePair && pairSignals.length > 0) {
+            selectedSinglePair = pairSignals[0].pair;
+            const selector = document.getElementById('pairSelector');
+            if (selector) {
+                selector.value = selectedSinglePair;
+            }
+        }
+
         const payload = {
             pair_mode: mode,
             selected_pair: mode === 'SINGLE' ? selectedSinglePair : null
@@ -41,9 +53,6 @@ async function setPairMode(mode) {
         pairMode = mode;
         updatePairModeUI();
         showToast(`Switched to ${mode} mode`, 'success');
-
-        // Reload pair signals to update the list
-        await loadPairSignals();
     } catch (err) {
         console.error('Failed to set pair mode:', err);
         showToast('Failed to set pair mode', 'error');
@@ -73,6 +82,7 @@ async function onPairSelect() {
             return;
         }
 
+        pairMode = 'SINGLE';
         updatePairModeUI();
         showToast(`Now trading ${selectedSinglePair}`, 'success');
     } catch (err) {
@@ -87,6 +97,8 @@ function updatePairModeUI() {
     const multiBtn = document.getElementById('pairModeMulti');
     const selectorContainer = document.getElementById('pairSelectorContainer');
     const statusDiv = document.getElementById('pairModeStatus');
+
+    if (!singleBtn || !multiBtn || !selectorContainer || !statusDiv) return;
 
     // Update button states
     if (pairMode === 'SINGLE') {
@@ -132,7 +144,8 @@ async function loadPairSignals() {
         // Update pair selector dropdown
         updatePairSelector();
 
-        // Render pair list
+        // FIX #3: Only render if not already rendered, or if data significantly changed
+        // This prevents the flashing issue
         renderPairList();
     } catch (err) {
         console.error('Failed to load pair signals:', err);
@@ -144,19 +157,21 @@ function updatePairSelector() {
     const selector = document.getElementById('pairSelector');
     if (!selector) return;
 
+    const currentValue = selector.value;
     selector.innerHTML = '<option value="">Select a pair...</option>';
 
     pairSignals.forEach(p => {
         const option = document.createElement('option');
         option.value = p.pair;
         option.textContent = `${p.pair} (Signal: ${p.signal_strength}%)`;
-        if (p.pair === selectedSinglePair) {
+        if (p.pair === (currentValue || selectedSinglePair)) {
             option.selected = true;
         }
         selector.appendChild(option);
     });
 }
 
+// FIX #1: Always render top 10 by default
 // Render pair list (sorted by signal strength, top 10 default)
 function renderPairList() {
     const container = document.getElementById('activePairsContainer');
@@ -167,131 +182,36 @@ function renderPairList() {
         return;
     }
 
-    // Show top 10 by default (already sorted by signal strength from API)
-    const topPairs = pairSignals.slice(0, 10);
+    // FIX #1: Always show top 10 by default
+    const pairsToShow = showingAllPairs ? pairSignals : pairSignals.slice(0, 10);
 
+    // FIX #3: Clear and rebuild to prevent flashing
     container.innerHTML = '';
 
-    topPairs.forEach(p => {
-        const card = document.createElement('div');
-        card.className = 'pair-card';
-        card.style.cssText = `
-      background: var(--card-bg);
-      border: 1px solid var(--gray-3);
-      border-radius: 8px;
-      padding: 12px 16px;
-      min-width: 200px;
-      flex: 1;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      transition: all 0.2s;
-    `;
-
-        // Signal strength indicator
-        let signalColor = '#4a6070';  // Gray
-        if (p.signal_strength >= 80) signalColor = '#00ff88';  // Green
-        else if (p.signal_strength >= 60) signalColor = '#ffcc00';  // Yellow
-
-        card.innerHTML = `
-      <div style="flex: 1;">
-        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
-          <div style="width: 8px; height: 8px; border-radius: 50%; background: ${signalColor};"></div>
-          <span style="font-weight: 700; font-size: 14px; color: var(--accent);">${p.pair}</span>
-        </div>
-        <div style="font-size: 11px; color: var(--gray-2);">
-          Signal: ${p.signal_strength}% | Price: ${p.last_price ? '$' + p.last_price.toFixed(2) : 'N/A'}
-        </div>
-      </div>
-      <div style="display: flex; align-items: center; gap: 8px;">
-        <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 11px; color: var(--text);">
-          <input type="checkbox" 
-                 ${p.enabled ? 'checked' : ''} 
-                 onchange="togglePairEnabled('${p.pair}', this.checked)"
-                 style="cursor: pointer;">
-          <span>${p.enabled ? 'Enabled' : 'Disabled'}</span>
-        </label>
-      </div>
-    `;
-
+    pairsToShow.forEach(p => {
+        const card = createPairCard(p);
         container.appendChild(card);
     });
 
-    // Add "Show More" button if there are more than 10 pairs
-    if (pairSignals.length > 10) {
-        const showMoreBtn = document.createElement('button');
-        showMoreBtn.textContent = `Show All (${pairSignals.length} pairs)`;
-        showMoreBtn.style.cssText = `
-      padding: 8px 16px;
-      background: var(--gray-3);
-      color: var(--accent);
-      border: 1px solid var(--gray-2);
-      border-radius: 4px;
-      font-family: 'Space Mono';
-      font-size: 12px;
-      cursor: pointer;
-      transition: all 0.2s;
-    `;
-        showMoreBtn.onclick = () => renderAllPairs();
-        container.appendChild(showMoreBtn);
+    // Add toggle button
+    const toggleBtn = document.createElement('button');
+    if (showingAllPairs) {
+        toggleBtn.textContent = 'Show Top 10';
+        toggleBtn.onclick = () => {
+            showingAllPairs = false;
+            renderPairList();
+        };
+    } else if (pairSignals.length > 10) {
+        toggleBtn.textContent = `Show All (${pairSignals.length} pairs)`;
+        toggleBtn.onclick = () => {
+            showingAllPairs = true;
+            renderPairList();
+        };
+    } else {
+        return; // No button needed if <= 10 pairs
     }
-}
 
-// Render all pairs (not just top 10)
-function renderAllPairs() {
-    const container = document.getElementById('activePairsContainer');
-    if (!container) return;
-
-    container.innerHTML = '';
-
-    pairSignals.forEach(p => {
-        const card = document.createElement('div');
-        card.className = 'pair-card';
-        card.style.cssText = `
-      background: var(--card-bg);
-      border: 1px solid var(--gray-3);
-      border-radius: 8px;
-      padding: 12px 16px;
-      min-width: 200px;
-      flex: 1;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      transition: all 0.2s;
-    `;
-
-        let signalColor = '#4a6070';
-        if (p.signal_strength >= 80) signalColor = '#00ff88';
-        else if (p.signal_strength >= 60) signalColor = '#ffcc00';
-
-        card.innerHTML = `
-      <div style="flex: 1;">
-        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
-          <div style="width: 8px; height: 8px; border-radius: 50%; background: ${signalColor};"></div>
-          <span style="font-weight: 700; font-size: 14px; color: var(--accent);">${p.pair}</span>
-        </div>
-        <div style="font-size: 11px; color: var(--gray-2);">
-          Signal: ${p.signal_strength}% | Price: ${p.last_price ? '$' + p.last_price.toFixed(2) : 'N/A'}
-        </div>
-      </div>
-      <div style="display: flex; align-items: center; gap: 8px;">
-        <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 11px; color: var(--text);">
-          <input type="checkbox" 
-                 ${p.enabled ? 'checked' : ''} 
-                 onchange="togglePairEnabled('${p.pair}', this.checked)"
-                 style="cursor: pointer;">
-          <span>${p.enabled ? 'Enabled' : 'Disabled'}</span>
-        </label>
-      </div>
-    `;
-
-        container.appendChild(card);
-    });
-
-    // Add "Show Less" button
-    const showLessBtn = document.createElement('button');
-    showLessBtn.textContent = 'Show Top 10';
-    showLessBtn.style.cssText = `
+    toggleBtn.style.cssText = `
     padding: 8px 16px;
     background: var(--gray-3);
     color: var(--accent);
@@ -301,9 +221,56 @@ function renderAllPairs() {
     font-size: 12px;
     cursor: pointer;
     transition: all 0.2s;
+    margin-top: 10px;
   `;
-    showLessBtn.onclick = () => renderPairList();
-    container.appendChild(showLessBtn);
+    container.appendChild(toggleBtn);
+}
+
+// Helper function to create a pair card
+function createPairCard(p) {
+    const card = document.createElement('div');
+    card.className = 'pair-card';
+    card.style.cssText = `
+    background: var(--card-bg);
+    border: 1px solid var(--gray-3);
+    border-radius: 8px;
+    padding: 12px 16px;
+    min-width: 200px;
+    flex: 1 1 calc(20% - 10px);
+    max-width: calc(20% - 10px);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    transition: all 0.2s;
+  `;
+
+    // Signal strength indicator
+    let signalColor = '#4a6070';  // Gray
+    if (p.signal_strength >= 80) signalColor = '#00ff88';  // Green
+    else if (p.signal_strength >= 60) signalColor = '#ffcc00';  // Yellow
+
+    card.innerHTML = `
+    <div style="flex: 1;">
+      <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+        <div style="width: 8px; height: 8px; border-radius: 50%; background: ${signalColor};"></div>
+        <span style="font-weight: 700; font-size: 14px; color: var(--accent);">${p.pair}</span>
+      </div>
+      <div style="font-size: 11px; color: var(--gray-2);">
+        Signal: ${p.signal_strength}% | Price: ${p.last_price ? '$' + p.last_price.toFixed(2) : 'N/A'}
+      </div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 8px;">
+      <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 11px; color: var(--text);">
+        <input type="checkbox" 
+               ${p.enabled ? 'checked' : ''} 
+               onchange="togglePairEnabled('${p.pair}', this.checked)"
+               style="cursor: pointer;">
+        <span>${p.enabled ? 'Enabled' : 'Disabled'}</span>
+      </label>
+    </div>
+  `;
+
+    return card;
 }
 
 // Toggle pair enabled/disabled
@@ -327,7 +294,7 @@ async function togglePairEnabled(pair, enabled) {
 
         showToast(`${pair} ${enabled ? 'enabled' : 'disabled'}`, 'success');
 
-        // Update local state
+        // Update local state without re-rendering
         const pairData = pairSignals.find(p => p.pair === pair);
         if (pairData) {
             pairData.enabled = enabled ? 1 : 0;
