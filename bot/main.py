@@ -234,6 +234,11 @@ def _run_strategy(current_price: float):
     logger.info(f"Signal: {signal} at price {current_price} | Confidence: {confidence:.1f}% | ATR: {atr:.4f} | Position Size: {position_size:.6f} | Trailing Stop: {trailing_stop:.2f} | Auto-execute: {auto_execute}")
     db.log_event("INFO", f"Signal {signal} at {current_price} for {PAIR} | Confidence: {confidence:.1f}% | ATR: {atr:.4f} | Trailing Stop: {trailing_stop:.2f}%")
 
+    # Check auto-execute flag - only proceed if confidence meets threshold
+    if not auto_execute:
+        logger.info(f"Signal rejected: auto_execute=False (confidence {confidence:.1f}% below threshold)")
+        return
+
     try:
         if mode == "PAPER":
             _run_paper_trade(current_price, signal, confidence, atr, position_size, trailing_stop)
