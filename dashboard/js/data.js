@@ -47,7 +47,7 @@ async function toggleBot() {
   btn.disabled = true;
 
   const endpoint = botRunning ? '/api/bot/stop' : '/api/bot/start';
-  const action   = botRunning ? 'Stopping...' : 'Starting...';
+  const action = botRunning ? 'Stopping...' : 'Starting...';
   btn.textContent = action;
 
   try {
@@ -134,7 +134,7 @@ async function fetchAll() {
     renderPaperTrades(paperTrades);
     renderActivePairs();
     updatePairPnlChart();
-    
+
     // Fetch and display open trades
     await fetchOpenTrades();
 
@@ -181,7 +181,7 @@ async function loadPairs() {
 
     // Update readiness FIRST, then render with data
     await updateReadiness();
-    
+
     renderPairs();
     renderFavorites();
     updatePairSelect();
@@ -281,14 +281,14 @@ async function updateReadiness() {
   try {
     const resp = await fetch(API + '/api/signal/readiness?pairs=' + encodeURIComponent(pairsList.join(',')));
     const data = await resp.json();
-    
+
     if (!Array.isArray(data)) return;
-    
+
     // Store readiness data globally for sorting
     data.forEach(item => {
       if (!item || !item.pair) return;
       pairReadiness[item.pair] = item;
-      
+
       const bar = document.querySelector(`[data-readiness="${item.pair}"]`);
       const val = document.querySelector(`[data-readiness-val="${item.pair}"]`);
       if (!bar || !val) return;
@@ -326,18 +326,22 @@ async function fetchOpenTrades() {
     const resp = await fetch(API + endpoint);
     const data = await resp.json();
     openTrades = data || [];
-    
+
     renderOpenTradesTabs();
-    
-    // Show/hide section based on whether there are open trades
-    const section = document.querySelector('.open-trades-section');
-    if (section) {
-      section.style.display = openTrades.length > 0 ? 'block' : 'none';
-    }
-    
+
+    // REMOVED: No longer hide section when no trades
+    // Section is always visible to show current state
+
     // Auto-select first trade if none selected
     if (openTrades.length > 0 && !selectedOpenTrade) {
       switchOpenTrade(openTrades[0]);
+    } else if (openTrades.length === 0) {
+      // Clear details when no trades
+      selectedOpenTrade = null;
+      const container = document.getElementById('openTradesDetail');
+      if (container) {
+        container.innerHTML = '<div style="color: var(--gray-2); text-align: center; padding: 20px;">No open positions at the moment</div>';
+      }
     }
   } catch (e) {
     console.error('Error fetching open trades:', e);
@@ -356,7 +360,7 @@ function switchTradeMode() {
 function switchOpenTrade(trade) {
   selectedOpenTrade = trade;
   renderOpenTradeDetail(trade);
-  
+
   // Update active tab styling
   document.querySelectorAll('.trade-tab').forEach(tab => {
     tab.classList.remove('active');
@@ -369,12 +373,12 @@ function switchOpenTrade(trade) {
 function renderOpenTradesTabs() {
   const container = document.getElementById('openTradesTabs');
   if (!container) return;
-  
+
   if (openTrades.length === 0) {
     container.innerHTML = '<div style="color: var(--gray-2); font-size: 11px;">No open trades</div>';
     return;
   }
-  
+
   container.innerHTML = openTrades.map(trade => {
     const isActive = selectedOpenTrade && selectedOpenTrade.position_id === trade.position_id;
     const posType = trade.side === 'buy' ? 'LONG' : 'SHORT';
@@ -385,7 +389,7 @@ function renderOpenTradesTabs() {
       </button>
     `;
   }).join('');
-  
+
   // Re-bind click handlers properly
   document.querySelectorAll('.trade-tab').forEach((tab, index) => {
     tab.onclick = () => switchOpenTrade(openTrades[index]);
@@ -395,16 +399,16 @@ function renderOpenTradesTabs() {
 function renderOpenTradeDetail(trade) {
   const container = document.getElementById('openTradesDetail');
   if (!container) return;
-  
+
   if (!trade) {
     container.innerHTML = '<div style="color: var(--gray-2); text-align: center; padding: 20px;">Select a trade to view details</div>';
     return;
   }
-  
+
   const posType = trade.side === 'buy' ? 'LONG' : 'SHORT';
   const pnlColor = trade.pnl > 0 ? 'positive' : trade.pnl < 0 ? 'negative' : '';
   const pnlText = trade.pnl !== undefined ? (trade.pnl > 0 ? '+' : '') + parseFloat(trade.pnl).toFixed(4) : '—';
-  
+
   container.innerHTML = `
     <div class="trade-details-grid">
       <div class="trade-detail-item">

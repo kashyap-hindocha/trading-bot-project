@@ -276,7 +276,7 @@ function createPairCard(p) {
 // Toggle pair enabled/disabled
 async function togglePairEnabled(pair, enabled) {
     try {
-        const res = await fetch(`${API}/api/pairs/config`, {
+        const res = await fetch(`${API}/api/pairs/config/update`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
