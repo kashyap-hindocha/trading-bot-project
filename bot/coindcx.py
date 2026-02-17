@@ -28,36 +28,95 @@ class CoinDCXREST:
 		self.secret = api_secret
 		self._inr_usdt_cache = {"rate": None, "ts": 0}
 
-	def _post(self, path, body):
+	def _post(self, path, body, max_retries=3):
+		"""POST request with retry logic and error handling."""
 		body["timestamp"] = int(time.time() * 1000)
 		# Create signature from JSON string
 		json_body = json.dumps(body, separators=(",", ":"))
 		sig = hmac.new(bytes(self.secret, encoding="utf-8"), json_body.encode(), hashlib.sha256).hexdigest()
-		# Send the EXACT string that was signed (use data= not json=)
-		resp = requests.post(FUTURES_BASE + path, headers=_headers(self.key, sig), data=json_body, timeout=10)
-		resp.raise_for_status()
-		return resp.json()
+		
+		for attempt in range(max_retries):
+			try:
+				# Send the EXACT string that was signed (use data= not json=)
+				resp = requests.post(FUTURES_BASE + path, headers=_headers(self.key, sig), data=json_body, timeout=10)
+				resp.raise_for_status()
+				return resp.json()
+				
+			except requests.HTTPError as e:
+				if e.response.status_code == 429:  # Rate limit
+					wait_time = 2 ** attempt  # Exponential backoff
+					logger.warning(f"Rate limited on {path}, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
+					time.sleep(wait_time)
+				else:
+					logger.error(f"HTTP error on {path}: {e.response.status_code} - {e.response.text}")
+					if attempt == max_retries - 1:
+						return {"error": str(e), "status_code": e.response.status_code}
+					time.sleep(1)
+					
+			except (requests.ConnectionError, requests.Timeout) as e:
+				logger.warning(f"Network error on {path}: {e} (attempt {attempt + 1}/{max_retries})")
+				if attempt == max_retries - 1:
+					return {"error": str(e)}
+				time.sleep(2 ** attempt)
+				
+			except Exception as e:
+				logger.error(f"Unexpected error on {path}: {e}")
+				return {"error": str(e)}
+				
+		return {"error": "Max retries exceeded"}
 
-	def _get(self, path, body=None):
+	def _get(self, path, body=None, max_retries=3):
+		"""GET request with retry logic and error handling."""
 		if body is None:
 			body = {}
 		body["timestamp"] = int(time.time() * 1000)
 		# Create signature from JSON string
 		json_body = json.dumps(body, separators=(",", ":"))
 		sig = hmac.new(bytes(self.secret, encoding="utf-8"), json_body.encode(), hashlib.sha256).hexdigest()
-		# Send the EXACT string that was signed (use data= not json=)
-		resp = requests.get(FUTURES_BASE + path, headers=_headers(self.key, sig), data=json_body, timeout=10)
-		resp.raise_for_status()
-		return resp.json()
+		
+		for attempt in range(max_retries):
+			try:
+				# Send the EXACT string that was signed (use data= not json=)
+				resp = requests.get(FUTURES_BASE + path, headers=_headers(self.key, sig), data=json_body, timeout=10)
+				resp.raise_for_status()
+				return resp.json()
+				
+			except requests.HTTPError as e:
+				if e.response.status_code == 429:  # Rate limit
+					wait_time = 2 ** attempt
+					logger.warning(f"Rate limited on {path}, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
+					time.sleep(wait_time)
+				else:
+					logger.error(f"HTTP error on {path}: {e.response.status_code} - {e.response.text}")
+					if attempt == max_retries - 1:
+						return {"error": str(e), "status_code": e.response.status_code}
+					time.sleep(1)
+					
+			except (requests.ConnectionError, requests.Timeout) as e:
+				logger.warning(f"Network error on {path}: {e} (attempt {attempt + 1}/{max_retries})")
+				if attempt == max_retries - 1:
+					return {"error": str(e)}
+				time.sleep(2 ** attempt)
+				
+			except Exception as e:
+				logger.error(f"Unexpected error on {path}: {e}")
+				return {"error": str(e)}
+				
+		return {"error": "Max retries exceeded"}
 
 	def get_candles(self, pair, interval, limit=100):
-		resp = requests.get(
-			f"{PUBLIC_BASE}/market_data/candles",
-			params={"pair": pair, "interval": interval, "limit": limit},
-			timeout=10,
-		)
-		resp.raise_for_status()
-		return resp.json()
+		"""Get candles with error handling."""
+		try:
+			resp = requests.get(
+				f"{PUBLIC_BASE}/market_data/candles",
+				params={"pair": pair, "interval": interval, "limit": limit},
+				timeout=10,
+			)
+			resp.raise_for_status()
+			return resp.json()
+		except Exception as e:
+			logger.error(f"Failed to get candles for {pair}: {e}")
+			return []
 
 	def get_tickers(self):
 		resp = requests.get(f"{PUBLIC_BASE}/market_data/ticker", timeout=10)
@@ -149,7 +208,12 @@ class CoinDCXREST:
 			return []
 
 	def get_positions(self):
-		return self._post("/exchange/v1/derivatives/futures/positions", {})
+		"""Get open positions with error handling."""
+		result = self._post("/exchange/v1/derivatives/futures/positions", {})
+		if isinstance(result, dict) and "error" in result:
+			logger.error(f"Failed to get positions: {result.get('error')}")
+			return []
+		return result if isinstance(result, list) else []
 
 	def get_open_orders(self, pair=""):
 		body = {}

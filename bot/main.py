@@ -27,12 +27,18 @@ from coindcx import CoinDCXREST, CoinDCXSocket
 load_dotenv("/home/ubuntu/trading-bot/.env")
 
 # ── Logging ──────────────────────────────────
+from logging.handlers import RotatingFileHandler
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler("/home/ubuntu/trading-bot/data/bot.log"),
+        RotatingFileHandler(
+            "/home/ubuntu/trading-bot/data/bot.log",
+            maxBytes=10*1024*1024,  # 10MB
+            backupCount=5  # Keep 5 backup files
+        ),
     ],
 )
 logger = logging.getLogger(__name__)
@@ -184,6 +190,9 @@ def _check_paper_positions(candle: dict):
         leverage = int(t.get("leverage") or 1)
         entry_fee = float(t.get("fee_paid") or 0)
 
+        # Calculate exit fee (was missing - caused NameError)
+        exit_fee = exit_price * quantity * TAKER_FEE_RATE
+
         raw_pnl = _calc_pnl(side, entry_price, exit_price, quantity, leverage)
         net_pnl = raw_pnl - entry_fee - exit_fee
         total_fee = entry_fee + exit_fee
@@ -266,16 +275,41 @@ def _run_strategy(current_price: float):
         order_id = order.get("id", "")
         logger.info(f"Entry order placed: {order_id} | {signal} position | Auto-execute: {auto_execute}")
 
-        # Small delay to let position register
-        time.sleep(1)
-
-        # Get position ID from open positions
-        positions = rest.get_positions()
-        position_id = ""
-        for p in positions:
-            if p.get("pair") == PAIR:
-                position_id = p.get("id", "")
-                break
+        # Try to get position ID from order response first
+        position_id = order.get("position_id", "")
+        
+        # If not in order response, poll positions with retry logic
+        if not position_id:
+            max_retries = 5
+            retry_count = 0
+            
+            while retry_count < max_retries and not position_id:
+                time.sleep(0.5)  # Wait for position to register
+                
+                try:
+                    positions = rest.get_positions()
+                    for p in positions:
+                        if p.get("pair") == PAIR and p.get("status") == "open":
+                            # Additional check: match order_id if available
+                            if order_id and p.get("order_id") == order_id:
+                                position_id = p.get("id", "")
+                                break
+                            # Fallback: just match pair (less safe but works)
+                            elif not position_id:
+                                position_id = p.get("id", "")
+                    
+                    if position_id:
+                        logger.info(f"Position ID found: {position_id} (retry {retry_count + 1})")
+                        break
+                        
+                except Exception as e:
+                    logger.warning(f"Error fetching positions (retry {retry_count + 1}): {e}")
+                
+                retry_count += 1
+            
+            if not position_id:
+                logger.error(f"Failed to get position ID after {max_retries} retries")
+                db.log_event("ERROR", f"Failed to get position ID for order {order_id}")
 
         # Calculate TP/SL
         active_strategy = strategy_manager.strategy_manager.get_active_strategy()
@@ -447,10 +481,45 @@ def main():
     socket.on("position_update", on_position_update)
     socket.on("order_update", on_order_update)
 
-    # Connect and block
+    # Connect with automatic reconnection
     logger.info(f"Connecting WebSocket for {PAIR} {INTERVAL}...")
-    socket.connect(PAIR, INTERVAL)
-    socket.wait()
+    
+    # Reconnection loop with exponential backoff
+    retry_delay = 1  # Start with 1 second
+    max_retry_delay = 60  # Max 60 seconds between retries
+    
+    while True:
+        try:
+            socket.connect(PAIR, INTERVAL)
+            logger.info("WebSocket connected successfully")
+            db.log_event("INFO", "WebSocket connected")
+            retry_delay = 1  # Reset delay on successful connection
+            
+            # Block and wait for events
+            socket.wait()
+            
+        except KeyboardInterrupt:
+            logger.info("Bot stopped by user")
+            db.log_event("INFO", "Bot stopped by user")
+            break
+            
+        except Exception as e:
+            logger.error(f"WebSocket error: {e}")
+            db.log_event("ERROR", f"WebSocket error: {e}")
+            
+            # Disconnect before reconnecting
+            try:
+                socket.disconnect()
+            except Exception:
+                pass
+            
+            # Wait before reconnecting (exponential backoff)
+            logger.warning(f"Reconnecting in {retry_delay} seconds...")
+            time.sleep(retry_delay)
+            
+            # Increase delay for next retry (exponential backoff)
+            retry_delay = min(retry_delay * 2, max_retry_delay)
+
 
 
 if __name__ == "__main__":
