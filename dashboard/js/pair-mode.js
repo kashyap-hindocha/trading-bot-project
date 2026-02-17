@@ -149,3 +149,95 @@ function updatePairModeUI() {
         statusDiv.textContent = 'Trading ALL enabled pairs';
     }
 }
+
+// Load and render pair signals (for horizontal Trading Pairs section)
+async function loadPairSignals() {
+    try {
+        const res = await fetch(`${API}/api/pair_signals`);
+        if (!res.ok) return;
+
+        const data = await res.json();
+        pairSignals = data.pairs || [];
+
+        // Populate pair selector for SINGLE mode
+        populatePairModeSelector();
+
+        // Render the horizontal pair cards
+        renderPairList();
+    } catch (err) {
+        console.error('Failed to load pair signals:', err);
+    }
+}
+
+// Render horizontal pair list (top 10 by default)
+function renderPairList() {
+    const container = document.getElementById('pairSignalsContainer');
+    if (!container) return;
+
+    if (!pairSignals || pairSignals.length === 0) {
+        container.innerHTML = '<div style="color: var(--gray-2); font-size: 12px; padding: 10px;">No pairs available</div>';
+        return;
+    }
+
+    // Always show top 10 by default
+    const pairsToShow = pairSignals.slice(0, 10);
+
+    container.innerHTML = '';
+
+    pairsToShow.forEach(p => {
+        const card = document.createElement('div');
+        card.style.cssText = `
+      padding: 12px 16px;
+      background: var(--gray-3);
+      border: 1px solid var(--gray-2);
+      border-radius: 6px;
+      min-width: 120px;
+      cursor: pointer;
+      transition: all 0.2s;
+    `;
+
+        const baseCoin = p.pair.replace('B-', '').replace('_USDT', '');
+        const signalPct = Math.min(100, Math.max(0, p.signal_strength || 0));
+
+        card.innerHTML = `
+      <div style="font-size: 13px; font-weight: 700; color: var(--accent); margin-bottom: 6px;">${baseCoin}</div>
+      <div style="font-size: 11px; color: var(--gray-1); margin-bottom: 4px;">Signal: ${signalPct}%</div>
+      <div style="height: 4px; background: var(--gray-2); border-radius: 2px; overflow: hidden;">
+        <div style="height: 100%; width: ${signalPct}%; background: var(--accent); transition: width 0.3s;"></div>
+      </div>
+    `;
+
+        card.onmouseenter = () => {
+            card.style.borderColor = 'var(--accent)';
+            card.style.transform = 'translateY(-2px)';
+        };
+        card.onmouseleave = () => {
+            card.style.borderColor = 'var(--gray-2)';
+            card.style.transform = 'translateY(0)';
+        };
+
+        container.appendChild(card);
+    });
+
+    // Add "Show All" button if more than 10 pairs
+    if (pairSignals.length > 10) {
+        const showAllBtn = document.createElement('button');
+        showAllBtn.textContent = `+${pairSignals.length - 10} more`;
+        showAllBtn.style.cssText = `
+      padding: 12px 16px;
+      background: var(--gray-3);
+      color: var(--accent);
+      border: 1px dashed var(--gray-2);
+      border-radius: 6px;
+      font-family: 'Space Mono';
+      font-size: 11px;
+      cursor: pointer;
+      transition: all 0.2s;
+    `;
+        showAllBtn.onclick = () => {
+            // Could expand to show all pairs
+            showToast('View all pairs feature coming soon', 'info');
+        };
+        container.appendChild(showAllBtn);
+    }
+}

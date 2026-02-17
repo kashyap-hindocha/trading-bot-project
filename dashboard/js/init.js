@@ -15,6 +15,7 @@ document.addEventListener('DOMContentLoaded', async function () {
 
   // Load pair mode (after pairs are loaded)
   await loadPairMode();
+  await loadPairSignals(); // Load horizontal pair signals
 
   // Then fetch all data
   await checkBotStatus();
