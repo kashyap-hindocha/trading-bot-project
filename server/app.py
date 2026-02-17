@@ -6,7 +6,16 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 from datetime import datetime, timezone, timedelta
 import db
-import strategy_manager
+
+# Try to import strategy_manager, fallback if fails
+try:
+    import strategy_manager
+    STRATEGY_MANAGER_LOADED = True
+except Exception as e:
+    import logging
+    logging.error(f"Failed to import strategy_manager: {e}")
+    STRATEGY_MANAGER_LOADED = False
+
 from coindcx import CoinDCXREST
 
 # IST timezone (UTC+5:30)
@@ -493,12 +502,31 @@ def trading_mode():
 @app.route("/api/strategies", methods=["GET", "POST"])
 def strategies():
     if request.method == "GET":
-        available_strategies = strategy_manager.strategy_manager.get_available_strategies()
-        active_strategy = strategy_manager.strategy_manager.get_active_strategy_name()
-        return jsonify({
-            "strategies": [{"name": s["name"], "description": s["description"]} for s in available_strategies],
-            "active": active_strategy
-        })
+        try:
+            if not STRATEGY_MANAGER_LOADED:
+                return jsonify({
+                    "strategies": [],
+                    "active": None,
+                    "error": "Strategy manager not loaded"
+                }), 500
+            
+            available_strategies = strategy_manager.strategy_manager.get_available_strategies()
+            active_strategy = strategy_manager.strategy_manager.get_active_strategy_name()
+            
+            result = {
+                "strategies": [{"name": s["name"], "displayName": s.get("display_name", s["name"]), "description": s["description"]} for s in available_strategies],
+                "active": active_strategy
+            }
+            return jsonify(result)
+        except Exception as e:
+            return jsonify({
+                "strategies": [],
+                "active": None,
+                "error": str(e)
+            }), 500
+
+    if not STRATEGY_MANAGER_LOADED:
+        return jsonify({"error": "Strategy manager not loaded"}), 500
 
     data = request.get_json() or {}
     strategy_name = str(data.get("strategy", "")).strip()

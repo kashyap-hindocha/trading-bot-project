@@ -5,6 +5,7 @@ Manages loading, switching, and execution of multiple trading strategies.
 """
 
 import importlib
+import importlib.util
 import os
 import logging
 from typing import Dict, List, Optional, Type
@@ -35,24 +36,31 @@ class StrategyManager:
             logger.warning(f"Strategies directory not found: {strategies_path}")
             return
 
+        logger.info(f"Loading strategies from: {strategies_path}")
+
         # Import all .py files in strategies directory
         for filename in os.listdir(strategies_path):
             if filename.endswith('.py') and not filename.startswith('__'):
                 module_name = filename[:-3]  # Remove .py extension
                 try:
-                    # Import the module
-                    module = importlib.import_module(f"{self.strategies_dir}.{module_name}")
-
-                    # Find strategy classes in the module
-                    for attr_name in dir(module):
-                        attr = getattr(module, attr_name)
-                        if (isinstance(attr, type) and
-                            issubclass(attr, TradingStrategy) and
-                            attr != TradingStrategy):
-
-                            strategy_name = attr().get_name().lower().replace(' ', '_')
-                            self.strategies[strategy_name] = attr
-                            logger.info(f"Loaded strategy: {strategy_name} ({attr.__name__})")
+                    # Import using the full path to ensure proper module location
+                    spec = importlib.util.spec_from_file_location(
+                        f"strategies.{module_name}",
+                        os.path.join(strategies_path, filename)
+                    )
+                    if spec and spec.loader:
+                        module = importlib.util.module_from_spec(spec)
+                        spec.loader.exec_module(module)
+                        
+                        # Find strategy classes in the module
+                        for attr_name in dir(module):
+                            attr = getattr(module, attr_name)
+                            if (isinstance(attr, type) and
+                                issubclass(attr, TradingStrategy) and
+                                attr != TradingStrategy):
+                                strategy_name = attr().get_name().lower().replace(' ', '_')
+                                self.strategies[strategy_name] = attr
+                                logger.info(f"Loaded strategy: {strategy_name} ({attr.__name__})")
 
                 except Exception as e:
                     logger.error(f"Failed to load strategy {module_name}: {e}")

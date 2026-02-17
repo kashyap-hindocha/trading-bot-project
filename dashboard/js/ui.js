@@ -12,24 +12,34 @@ function renderMode() {
 
 // ── Strategy Management ──
 async function loadStrategies() {
+  const select = document.getElementById('strategySelect');
+  
   try {
     const response = await fetch('/api/strategies');
-    const data = await response.json();
-    const select = document.getElementById('strategySelect');
     
-    if (data.strategies && data.strategies.length > 0) {
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    if (data.strategies && Array.isArray(data.strategies) && data.strategies.length > 0) {
       select.innerHTML = data.strategies.map(s => 
-        `<option value="${s.name}">${s.name}</option>`
+        `<option value="${s.name}">${s.displayName || s.name}</option>`
       ).join('');
-      select.value = data.active || '';
+      
+      if (data.active) {
+        select.value = data.active;
+      }
     } else {
-      select.innerHTML = '<option value="">No strategies available</option>';
+      select.innerHTML = '<option value="">No strategies</option>';
     }
     select.disabled = false;
   } catch (error) {
-    console.error('Failed to load strategies:', error);
-    const select = document.getElementById('strategySelect');
-    select.innerHTML = '<option value="">Error loading strategies</option>';
+    // Fallback: show status message
+    select.innerHTML = '<option value="">Strategies unavailable</option>';
+    select.disabled = true;
+    console.error('Strategy load failed:', error);
   }
 }
 
