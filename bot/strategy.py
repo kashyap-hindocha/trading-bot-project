@@ -588,3 +588,88 @@ def check_daily_trend(hourly_candles: list[dict]) -> str | None:
     elif close_now < close_24h_ago:
         return "DOWN"
     return None
+
+
+# ─────────────────────────────────────────────
+#  Signal Strength (for pair sorting)
+# ─────────────────────────────────────────────
+def calculate_signal_strength(candles: list[dict]) -> float:
+    """
+    Calculate how close a pair is to generating a trade signal (0-100).
+    Used for sorting pairs by proximity to signals.
+    
+    Returns:
+        100 = Signal triggered (confidence >= 90%)
+        80-99 = Very close (indicators aligning)
+        60-79 = Moderate (some indicators aligning)
+        0-59 = Far from signal
+    
+    Algorithm:
+        - If signal exists, return confidence score
+        - Otherwise, calculate proximity based on:
+          * EMA distance (how close to crossover)
+          * MACD alignment
+          * RSI levels
+          * Volume
+    """
+    min_candles = max(CONFIG["ema_slow"], CONFIG["macd_slow"]) + 5
+    if len(candles) < min_candles:
+        return 0.0
+    
+    # First check if there's an active signal
+    result = evaluate(candles, return_confidence=True)
+    if result and result["signal"] and result["confidence"] >= 90:
+        return 100.0  # Active signal with high confidence
+    elif result and result["signal"]:
+        return result["confidence"]  # Active signal with lower confidence
+    
+    # No signal yet - calculate proximity
+    ind = compute_indicators(candles)
+    
+    if None in (ind["ema_fast"], ind["ema_slow"]):
+        return 0.0
+    
+    strength = 0.0
+    
+    # 1. EMA Proximity (40% weight) - how close to crossover
+    ema_diff = abs(ind["ema_fast"] - ind["ema_slow"])
+    last_close = ind["last_close"] if ind["last_close"] else 1
+    ema_diff_pct = (ema_diff / last_close) * 100
+    
+    # Closer EMAs = higher strength
+    if ema_diff_pct < 0.1:  # Very close (< 0.1%)
+        strength += 40
+    elif ema_diff_pct < 0.5:  # Close (< 0.5%)
+        strength += 40 * (1 - (ema_diff_pct / 0.5))
+    elif ema_diff_pct < 1.0:  # Moderate (< 1%)
+        strength += 20 * (1 - (ema_diff_pct / 1.0))
+    
+    # 2. MACD Proximity (25% weight) - how close to crossover
+    macd = ind.get("macd", 0)
+    macd_signal = ind.get("macd_signal", 0)
+    macd_diff = abs(macd - macd_signal)
+    
+    if macd_diff < 0.01:  # Very close
+        strength += 25
+    elif macd_diff < 0.05:  # Close
+        strength += 25 * (1 - (macd_diff / 0.05))
+    elif macd_diff < 0.1:  # Moderate
+        strength += 12.5 * (1 - (macd_diff / 0.1))
+    
+    # 3. RSI Levels (20% weight) - extreme levels indicate potential reversal
+    rsi = ind.get("rsi", 50)
+    
+    if rsi < 30 or rsi > 70:  # Extreme levels
+        strength += 20
+    elif rsi < 40 or rsi > 60:  # Moderate levels
+        strength += 10
+    
+    # 4. Volume (15% weight) - higher volume = more likely to move
+    volume_ratio = ind.get("volume_ratio", 0)
+    
+    if volume_ratio >= 1.2:  # High volume
+        strength += 15
+    elif volume_ratio >= 0.8:  # Moderate volume
+        strength += 15 * (volume_ratio / 1.2)
+    
+    return min(100.0, round(strength, 1))

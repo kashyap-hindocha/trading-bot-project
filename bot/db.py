@@ -154,6 +154,15 @@ def init_db():
         )
     """)
 
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS bot_config (
+            id            INTEGER PRIMARY KEY CHECK (id = 1),
+            pair_mode     TEXT DEFAULT 'MULTI',  -- SINGLE / MULTI
+            selected_pair TEXT,                   -- Used when pair_mode=SINGLE
+            updated_at    TEXT DEFAULT (datetime('now'))
+        )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -452,3 +461,46 @@ def get_paper_equity_history(limit=200):
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+# ── Bot Config (Pair Mode) ──────────────────
+def get_pair_mode() -> dict:
+    """Get current pair mode (SINGLE/MULTI) and selected pair."""
+    conn = get_conn()
+    row = conn.execute("SELECT pair_mode, selected_pair FROM bot_config WHERE id=1").fetchone()
+    conn.close()
+    
+    if row:
+        return {
+            "pair_mode": row["pair_mode"] or "MULTI",
+            "selected_pair": row["selected_pair"]
+        }
+    
+    # Default to MULTI mode if not set
+    return {"pair_mode": "MULTI", "selected_pair": None}
+
+
+def set_pair_mode(mode: str, selected_pair: str = None):
+    """Set pair mode (SINGLE/MULTI) and optionally selected pair for SINGLE mode."""
+    mode = mode.upper()
+    if mode not in ("SINGLE", "MULTI"):
+        raise ValueError(f"Invalid pair_mode: {mode}. Must be SINGLE or MULTI.")
+    
+    conn = get_conn()
+    conn.execute("""
+        INSERT INTO bot_config (id, pair_mode, selected_pair, updated_at)
+        VALUES (1, ?, ?, datetime('now'))
+        ON CONFLICT(id) DO UPDATE SET
+            pair_mode=excluded.pair_mode,
+            selected_pair=excluded.selected_pair,
+            updated_at=datetime('now')
+    """, (mode, selected_pair))
+    conn.commit()
+    conn.close()
+
+
+def init_pair_mode_if_missing():
+    """Initialize pair mode to MULTI if not set."""
+    current = get_pair_mode()
+    if not current or not current.get("pair_mode"):
+        set_pair_mode("MULTI")
