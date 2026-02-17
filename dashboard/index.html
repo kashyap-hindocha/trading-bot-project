@@ -1,256 +1,338 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ALGO DESK — Trading Bot</title>
-  
+
   <!-- Fonts -->
-  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
-  
+  <link
+    href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;700;800&display=swap"
+    rel="stylesheet">
+
   <!-- Chart.js Library -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-  
+
   <!-- Lightweight Charts (TradingView) -->
   <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
-  
+
   <!-- Stylesheets -->
   <link rel="stylesheet" href="css/variables.css">
   <link rel="stylesheet" href="css/styles.css">
 </head>
+
 <body>
 
-<!-- HEADER -->
-<header>
-  <div class="logo">ALGO<span>/</span>DESK</div>
-  <div class="header-right">
-    <div class="last-update" id="lastUpdate">—</div>
-    <div class="status-pill">
-      <div class="dot" id="statusDot"></div>
-      <span id="statusText">CHECKING</span>
+  <!-- HEADER -->
+  <header>
+    <div class="logo">ALGO<span>/</span>DESK</div>
+    <div class="header-right">
+      <div class="last-update" id="lastUpdate">—</div>
+      <div class="status-pill">
+        <div class="dot" id="statusDot"></div>
+        <span id="statusText">CHECKING</span>
+      </div>
+      <button class="mode-btn" id="modeBtn" onclick="toggleMode()" disabled>
+        MODE: —
+      </button>
+      <select class="strategy-select" id="strategySelect" onchange="changeStrategy()" disabled>
+        <option value="">Loading strategies...</option>
+      </select>
+      <button class="toggle-btn start" id="toggleBtn" onclick="toggleBot()" disabled>
+        ⏳ Loading
+      </button>
     </div>
-    <button class="mode-btn" id="modeBtn" onclick="toggleMode()" disabled>
-      MODE: —
-    </button>
-    <select class="strategy-select" id="strategySelect" onchange="changeStrategy()" disabled>
-      <option value="">Loading strategies...</option>
-    </select>
-    <button class="toggle-btn start" id="toggleBtn" onclick="toggleBot()" disabled>
-      ⏳ Loading
-    </button>
-  </div>
-</header>
+  </header>
 
-<!-- MAIN CONTENT -->
-<main>
-  <!-- Stats Row 1 -->
-  <div class="stat-row">
-    <div class="card accent">
-      <div class="card-label">Wallet Balance</div>
-      <div class="card-value accent" id="balance">—</div>
-      <div class="card-sub" id="balanceSub">Futures wallet</div>
-    </div>
-    <div class="card green">
-      <div class="card-label">Total PnL</div>
-      <div class="card-value" id="totalPnl">—</div>
-      <div class="card-sub">closed trades</div>
-    </div>
-    <div class="card">
-      <div class="card-label">Win Rate</div>
-      <div class="card-value" id="winRate">—</div>
-      <div class="card-sub" id="winsLosses">— wins / — losses</div>
-    </div>
-    <div class="card yellow">
-      <div class="card-label">Open Positions</div>
-      <div class="card-value" id="openPositions">—</div>
-      <div class="card-sub" id="totalTrades">— total trades</div>
-    </div>
-  </div>
-
-  <!-- Stats Row 2 (Paper Trading) -->
-  <div class="stat-row">
-    <div class="card accent">
-      <div class="card-label">Paper Balance</div>
-      <div class="card-value accent" id="paperBalance">—</div>
-      <div class="card-sub">paper wallet</div>
-      <button class="mini-btn" onclick="resetPaperBalance()">Reset Paper Balance</button>
-    </div>
-    <div class="card green">
-      <div class="card-label">Paper PnL</div>
-      <div class="card-value" id="paperTotalPnl">—</div>
-      <div class="card-sub">closed paper trades</div>
-    </div>
-    <div class="card">
-      <div class="card-label">Paper Win Rate</div>
-      <div class="card-value" id="paperWinRate">—</div>
-      <div class="card-sub" id="paperWinsLosses">— wins / — losses</div>
-    </div>
-    <div class="card yellow">
-      <div class="card-label">Paper Open</div>
-      <div class="card-value" id="paperOpenPositions">—</div>
-      <div class="card-sub" id="paperTotalTrades">— total trades</div>
-    </div>
-  </div>
-
-  <!-- Active Trading Pairs -->
-  <div class="active-pairs-section">
-    <div class="panel-title">
-      📊 Active Trading Pairs
-      <div class="panel-tools" style="font-size: 11px; color: var(--gray-2);">
-        Real-time active trades
+  <!-- MAIN CONTENT -->
+  <main>
+    <!-- Stats Row 1 -->
+    <div class="stat-row">
+      <div class="card accent">
+        <div class="card-label">Wallet Balance</div>
+        <div class="card-value accent" id="balance">—</div>
+        <div class="card-sub" id="balanceSub">Futures wallet</div>
+      </div>
+      <div class="card green">
+        <div class="card-label">Total PnL</div>
+        <div class="card-value" id="totalPnl">—</div>
+        <div class="card-sub">closed trades</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Win Rate</div>
+        <div class="card-value" id="winRate">—</div>
+        <div class="card-sub" id="winsLosses">— wins / — losses</div>
+      </div>
+      <div class="card yellow">
+        <div class="card-label">Open Positions</div>
+        <div class="card-value" id="openPositions">—</div>
+        <div class="card-sub" id="totalTrades">— total trades</div>
       </div>
     </div>
-    <div id="activePairsContainer" style="display: flex; gap: 10px; flex-wrap: wrap;">
-      <div style="color: var(--gray-2); font-size: 12px; padding: 10px;">No active trades</div>
-    </div>
-  </div>
 
-  <!-- Open Trades Multi-View Section -->
-  <div class="open-trades-section" style="display: none;">
-    <div class="panel-title">
-      🔄 Open Positions
-      <div class="panel-tools">
-        <select id="openTradesModeSelect" onchange="switchTradeMode()">
-          <option value="real">Real Trades</option>
-          <option value="paper">Paper Trades</option>
-        </select>
+    <!-- Stats Row 2 (Paper Trading) -->
+    <div class="stat-row">
+      <div class="card accent">
+        <div class="card-label">Paper Balance</div>
+        <div class="card-value accent" id="paperBalance">—</div>
+        <div class="card-sub">paper wallet</div>
+        <button class="mini-btn" onclick="resetPaperBalance()">Reset Paper Balance</button>
+      </div>
+      <div class="card green">
+        <div class="card-label">Paper PnL</div>
+        <div class="card-value" id="paperTotalPnl">—</div>
+        <div class="card-sub">closed paper trades</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Paper Win Rate</div>
+        <div class="card-value" id="paperWinRate">—</div>
+        <div class="card-sub" id="paperWinsLosses">— wins / — losses</div>
+      </div>
+      <div class="card yellow">
+        <div class="card-label">Paper Open</div>
+        <div class="card-value" id="paperOpenPositions">—</div>
+        <div class="card-sub" id="paperTotalTrades">— total trades</div>
       </div>
     </div>
-    <div class="open-trades-tabs-container">
-      <div id="openTradesTabs" style="display: flex; gap: 8px; margin-bottom: 12px; border-bottom: 1px solid var(--gray-3); padding-bottom: 8px; overflow-x: auto;"></div>
-    </div>
-    <div id="openTradesDetail" class="chart-panel" style="min-height: 200px; padding: 16px;">
-      <div style="color: var(--gray-2); text-align: center; padding: 20px;">Select a trade to view details</div>
-    </div>
-  </div>
 
-  <!-- Charts and Favorites Layout (70/30) -->
-  <div class="charts-pairs-container">
-    <div class="charts-section">
-      <!-- Candlestick Chart (Main Dynamic Chart) -->
-      <div class="chart-panel wide">
-        <div class="panel-title">
-          🕯️ Live Price Chart (Interactive) — Threshold: 90%
-          <div class="panel-tools">
-            <select id="candlePairSelect" onchange="onCandlePairSelect()" style="padding: 4px 8px; background: #1e2a35; color: #00e5ff; border: 1px solid #2a3a45; border-radius: 4px; font-family: Space Mono; font-size: 12px; min-width: 120px;">
-              <option value="">Select Pair...</option>
+    <!-- Pair Mode Control Section -->
+    <div class="pair-mode-section" style="margin: 20px 0;">
+      <div class="panel-title">
+        ⚙️ Trading Mode
+        <div class="panel-tools" style="font-size: 11px; color: var(--gray-2);">
+          Control single or multi-pair trading
+        </div>
+      </div>
+      <div class="card" style="padding: 20px;">
+        <div style="display: flex; gap: 20px; align-items: center; flex-wrap: wrap;">
+          <!-- Mode Toggle -->
+          <div style="flex: 0 0 auto;">
+            <div style="font-size: 11px; color: var(--gray-2); margin-bottom: 8px;">TRADING MODE</div>
+            <div style="display: flex; gap: 8px;">
+              <button id="pairModeSingle" class="mode-toggle-btn" onclick="setPairMode('SINGLE')"
+                style="padding: 8px 16px; background: var(--gray-3); color: var(--text); border: 1px solid var(--gray-2); border-radius: 4px; font-family: 'Space Mono'; font-size: 12px; cursor: pointer; transition: all 0.2s;">
+                SINGLE
+              </button>
+              <button id="pairModeMulti" class="mode-toggle-btn active" onclick="setPairMode('MULTI')"
+                style="padding: 8px 16px; background: var(--accent); color: #000; border: 1px solid var(--accent); border-radius: 4px; font-family: 'Space Mono'; font-size: 12px; font-weight: 700; cursor: pointer; transition: all 0.2s;">
+                MULTI
+              </button>
+            </div>
+          </div>
+
+          <!-- Pair Selector (for SINGLE mode) -->
+          <div id="pairSelectorContainer" style="flex: 1; min-width: 200px; display: none;">
+            <div style="font-size: 11px; color: var(--gray-2); margin-bottom: 8px;">SELECT PAIR</div>
+            <select id="pairSelector" onchange="onPairSelect()"
+              style="width: 100%; padding: 8px 12px; background: var(--bg); color: var(--accent); border: 1px solid var(--gray-2); border-radius: 4px; font-family: 'Space Mono'; font-size: 12px;">
+              <option value="">Loading pairs...</option>
             </select>
-            <select id="candleTimeframe" onchange="onTimeframeChange()" style="padding: 4px 8px; background: #1e2a35; color: #00e5ff; border: 1px solid #2a3a45; border-radius: 4px; font-family: Space Mono; font-size: 12px;">
-              <option value="1m">1m</option>
-              <option value="5m" selected>5m</option>
-              <option value="15m">15m</option>
-              <option value="1h">1h</option>
-              <option value="4h">4h</option>
-            </select>
-            <span id="candleInfo" style="color: #4a6070; font-size: 11px; margin-left: 12px;">— Zoom: Wheel | Pan: Drag</span>
+          </div>
+
+          <!-- Current Mode Info -->
+          <div style="flex: 1; text-align: right;">
+            <div style="font-size: 11px; color: var(--gray-2); margin-bottom: 4px;">STATUS</div>
+            <div id="pairModeStatus" style="font-size: 14px; color: var(--accent); font-weight: 700;">
+              Trading ALL enabled pairs
+            </div>
           </div>
         </div>
-        <div id="candleChart" style="width: 100%; height: 400px; background: #0f1419;"></div>
       </div>
+    </div>
 
-      <!-- Side-by-side Charts -->
-      <div style="display: flex; gap: 16px;">
-        <div class="chart-panel side">
-          <div class="panel-title">Pair PnL</div>
-          <div class="chart-wrap"><canvas id="pairPnlChart"></canvas></div>
-        </div>
-
-        <div class="chart-panel side">
-          <div class="panel-title">PnL / Trade</div>
-          <div class="chart-wrap"><canvas id="pnlChart"></canvas></div>
+    <!-- Active Trading Pairs -->
+    <div class="active-pairs-section">
+      <div class="panel-title">
+        📊 Trading Pairs
+        <div class="panel-tools" style="font-size: 11px; color: var(--gray-2);">
+          Sorted by signal strength (top 10)
         </div>
       </div>
-
-      <!-- Equity Chart -->
-      <div class="chart-panel wide">
-        <div class="panel-title">Equity Curve</div>
-        <div class="chart-wrap"><canvas id="equityChart"></canvas></div>
+      <div id="activePairsContainer" style="display: flex; gap: 10px; flex-wrap: wrap;">
+        <div style="color: var(--gray-2); font-size: 12px; padding: 10px;">Loading pairs...</div>
       </div>
     </div>
 
-    <!-- Favorites Panel (Right Side) -->
-    <div class="pairs-section">
-      <div class="chart-panel" style="flex: 1; overflow-y: auto;">
-        <div class="panel-title">⭐ Favorites</div>
-        <div id="favoritesPanel" style="display: flex; flex-direction: column; gap: 6px; font-size: 12px;"></div>
+    <!-- Open Trades Multi-View Section -->
+    <div class="open-trades-section" style="display: none;">
+      <div class="panel-title">
+        🔄 Open Positions
+        <div class="panel-tools">
+          <select id="openTradesModeSelect" onchange="switchTradeMode()">
+            <option value="real">Real Trades</option>
+            <option value="paper">Paper Trades</option>
+          </select>
+        </div>
+      </div>
+      <div class="open-trades-tabs-container">
+        <div id="openTradesTabs"
+          style="display: flex; gap: 8px; margin-bottom: 12px; border-bottom: 1px solid var(--gray-3); padding-bottom: 8px; overflow-x: auto;">
+        </div>
+      </div>
+      <div id="openTradesDetail" class="chart-panel" style="min-height: 200px; padding: 16px;">
+        <div style="color: var(--gray-2); text-align: center; padding: 20px;">Select a trade to view details</div>
       </div>
     </div>
-  </div>
 
-  <!-- Coin Manager — Pair Listing (Sorted by Confidence) -->
-  <div class="coin-manager">
-    <div class="panel-title">
-      📈 All Pairs (Sorted by Confidence - Closest to 90% First)
-      <div class="panel-tools">
-        <input type="text" id="pairSearch" placeholder="Search pairs..." oninput="onPairsPageChange()">
-        <select id="pairListLimit" onchange="onPairsPageChange()">
-          <option value="10">Top 10</option>
-          <option value="20">Top 20</option>
-          <option value="30">Top 30</option>
-          <option value="50" selected>Top 50</option>
-          <option value="100">Top 100</option>
-          <option value="1000">All</option>
-        </select>
+    <!-- Charts and Favorites Layout (70/30) -->
+    <div class="charts-pairs-container">
+      <div class="charts-section">
+        <!-- Candlestick Chart (Main Dynamic Chart) -->
+        <div class="chart-panel wide">
+          <div class="panel-title">
+            🕯️ Live Price Chart (Interactive) — Threshold: 90%
+            <div class="panel-tools">
+              <select id="candlePairSelect" onchange="onCandlePairSelect()"
+                style="padding: 4px 8px; background: #1e2a35; color: #00e5ff; border: 1px solid #2a3a45; border-radius: 4px; font-family: Space Mono; font-size: 12px; min-width: 120px;">
+                <option value="">Select Pair...</option>
+              </select>
+              <select id="candleTimeframe" onchange="onTimeframeChange()"
+                style="padding: 4px 8px; background: #1e2a35; color: #00e5ff; border: 1px solid #2a3a45; border-radius: 4px; font-family: Space Mono; font-size: 12px;">
+                <option value="1m">1m</option>
+                <option value="5m" selected>5m</option>
+                <option value="15m">15m</option>
+                <option value="1h">1h</option>
+                <option value="4h">4h</option>
+              </select>
+              <span id="candleInfo" style="color: #4a6070; font-size: 11px; margin-left: 12px;">— Zoom: Wheel | Pan:
+                Drag</span>
+            </div>
+          </div>
+          <div id="candleChart" style="width: 100%; height: 400px; background: #0f1419;"></div>
+        </div>
+
+        <!-- Side-by-side Charts -->
+        <div style="display: flex; gap: 16px;">
+          <div class="chart-panel side">
+            <div class="panel-title">Pair PnL</div>
+            <div class="chart-wrap"><canvas id="pairPnlChart"></canvas></div>
+          </div>
+
+          <div class="chart-panel side">
+            <div class="panel-title">PnL / Trade</div>
+            <div class="chart-wrap"><canvas id="pnlChart"></canvas></div>
+          </div>
+        </div>
+
+        <!-- Equity Chart -->
+        <div class="chart-panel wide">
+          <div class="panel-title">Equity Curve</div>
+          <div class="chart-wrap"><canvas id="equityChart"></canvas></div>
+        </div>
+      </div>
+
+      <!-- Favorites Panel (Right Side) -->
+      <div class="pairs-section">
+        <div class="chart-panel" style="flex: 1; overflow-y: auto;">
+          <div class="panel-title">⭐ Favorites</div>
+          <div id="favoritesPanel" style="display: flex; flex-direction: column; gap: 6px; font-size: 12px;"></div>
+        </div>
       </div>
     </div>
-    <div class="coin-grid" id="coinGrid">
-      <div class="loading">Loading available pairs...</div>
+
+    <!-- Coin Manager — Pair Listing (Sorted by Confidence) -->
+    <div class="coin-manager">
+      <div class="panel-title">
+        📈 All Pairs (Sorted by Confidence - Closest to 90% First)
+        <div class="panel-tools">
+          <input type="text" id="pairSearch" placeholder="Search pairs..." oninput="onPairsPageChange()">
+          <select id="pairListLimit" onchange="onPairsPageChange()">
+            <option value="10">Top 10</option>
+            <option value="20">Top 20</option>
+            <option value="30">Top 30</option>
+            <option value="50" selected>Top 50</option>
+            <option value="100">Top 100</option>
+            <option value="1000">All</option>
+          </select>
+        </div>
+      </div>
+      <div class="coin-grid" id="coinGrid">
+        <div class="loading">Loading available pairs...</div>
+      </div>
     </div>
-  </div>
 
-  <!-- Trade History Table -->
-  <div class="table-panel">
-    <div class="panel-title">Trade History</div>
-    <table>
-      <thead>
-        <tr>
-          <th>Pair</th><th>Side</th><th>Entry</th><th>Exit</th>
-          <th>TP</th><th>SL</th><th>Qty</th><th>Lev</th>
-          <th>PnL</th><th>Status</th><th>Confidence</th><th>ATR</th><th>Trailing Stop</th><th>Opened</th>
-        </tr>
-      </thead>
-      <tbody id="tradesBody">
-        <tr><td colspan="14" class="loading">Loading trades...</td></tr>
-      </tbody>
-    </table>
-  </div>
-
-  <!-- Paper Trade History Table -->
-  <div class="table-panel">
-    <div class="panel-title">Paper Trade History</div>
-    <table>
-      <thead>
-        <tr>
-          <th>Pair</th><th>Side</th><th>Entry</th><th>Exit</th>
-          <th>TP</th><th>SL</th><th>Qty</th><th>Lev</th>
-          <th>PnL</th><th>Status</th><th>Confidence</th><th>ATR</th><th>Trailing Stop</th><th>Opened</th>
-        </tr>
-      </thead>
-      <tbody id="paperTradesBody">
-        <tr><td colspan="14" class="loading">Loading paper trades...</td></tr>
-      </tbody>
-    </table>
-  </div>
-
-  <!-- Bot Logs -->
-  <div class="logs-panel">
-    <div class="panel-title">Bot Logs</div>
-    <div class="log-list" id="logList">
-      <div class="loading">Loading logs...</div>
+    <!-- Trade History Table -->
+    <div class="table-panel">
+      <div class="panel-title">Trade History</div>
+      <table>
+        <thead>
+          <tr>
+            <th>Pair</th>
+            <th>Side</th>
+            <th>Entry</th>
+            <th>Exit</th>
+            <th>TP</th>
+            <th>SL</th>
+            <th>Qty</th>
+            <th>Lev</th>
+            <th>PnL</th>
+            <th>Status</th>
+            <th>Confidence</th>
+            <th>ATR</th>
+            <th>Trailing Stop</th>
+            <th>Opened</th>
+          </tr>
+        </thead>
+        <tbody id="tradesBody">
+          <tr>
+            <td colspan="14" class="loading">Loading trades...</td>
+          </tr>
+        </tbody>
+      </table>
     </div>
-  </div>
-</main>
 
-<!-- Toast Notification -->
-<div class="toast" id="toast"></div>
+    <!-- Paper Trade History Table -->
+    <div class="table-panel">
+      <div class="panel-title">Paper Trade History</div>
+      <table>
+        <thead>
+          <tr>
+            <th>Pair</th>
+            <th>Side</th>
+            <th>Entry</th>
+            <th>Exit</th>
+            <th>TP</th>
+            <th>SL</th>
+            <th>Qty</th>
+            <th>Lev</th>
+            <th>PnL</th>
+            <th>Status</th>
+            <th>Confidence</th>
+            <th>ATR</th>
+            <th>Trailing Stop</th>
+            <th>Opened</th>
+          </tr>
+        </thead>
+        <tbody id="paperTradesBody">
+          <tr>
+            <td colspan="14" class="loading">Loading paper trades...</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
 
-<!-- Scripts (in order of dependency) -->
-<script src="js/app.js"></script>
-<script src="js/charts.js"></script>
-<script src="js/candlestick.js"></script>
-<script src="js/data.js"></script>
-<script src="js/ui.js"></script>
-<script src="js/init.js"></script>
+    <!-- Bot Logs -->
+    <div class="logs-panel">
+      <div class="panel-title">Bot Logs</div>
+      <div class="log-list" id="logList">
+        <div class="loading">Loading logs...</div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Toast Notification -->
+  <div class="toast" id="toast"></div>
+
+  <!-- Scripts (in order of dependency) -->
+  <script src="js/app.js"></script>
+  <script src="js/charts.js"></script>
+  <script src="js/candlestick.js"></script>
+  <script src="js/data.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/pair-mode.js"></script>
+  <script src="js/init.js"></script>
 
 </body>
+
 </html>

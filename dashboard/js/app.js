@@ -20,6 +20,12 @@ let latestPaperTrades = [];
 let pairReadiness = {}; // Store readiness data for sorting
 let favoritePairs = new Set(JSON.parse(localStorage.getItem('favoritePairs') || '[]'));
 
+// Pair Mode State
+let pairMode = 'MULTI';  // SINGLE or MULTI
+let selectedSinglePair = null;
+let pairSignals = [];  // Pairs with signal strength
+
+
 // Toast notification
 function showToast(msg, type = 'success') {
   const t = document.getElementById('toast');
