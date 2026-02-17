@@ -28,5 +28,6 @@ document.addEventListener('DOMContentLoaded', async function () {
   setInterval(updateReadiness, REFRESH_MS * 2);
   setInterval(updatePriceChart, REFRESH_MS * 2);
   setInterval(updateCandleChart, 10000); // Refresh candlesticks every 10s
-  setInterval(loadPairSignals, 10000); // Refresh pair signals every 10s
+  // NOTE: Removed loadPairSignals auto-refresh to prevent UI flashing
+  // Pairs are loaded once on startup and can be manually refreshed
 });

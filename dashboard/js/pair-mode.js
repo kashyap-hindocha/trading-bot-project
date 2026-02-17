@@ -174,7 +174,7 @@ function updatePairSelector() {
 // FIX #1: Always render top 10 by default
 // Render pair list (sorted by signal strength, top 10 default)
 function renderPairList() {
-    const container = document.getElementById('activePairsContainer');
+    const container = document.getElementById('pairSignalsContainer');
     if (!container) return;
 
     if (!pairSignals || pairSignals.length === 0) {
