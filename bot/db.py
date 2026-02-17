@@ -37,7 +37,10 @@ def init_db():
             opened_at     TEXT,
             closed_at     TEXT,
             strategy_note TEXT,
-            confidence    REAL DEFAULT 0.0    -- strategy confidence % (0-100)
+            confidence    REAL DEFAULT 0.0,    -- strategy confidence % (0-100)
+            atr           REAL DEFAULT 0.0,    -- Average True Range at entry
+            position_size REAL DEFAULT 0.0,    -- Dynamic position size in base currency
+            trailing_stop REAL DEFAULT 0.0     -- ATR-based trailing stop level
         )
     """)
 
@@ -76,6 +79,24 @@ def init_db():
     if "inr_amount" not in cols:
         c.execute("ALTER TABLE pair_config ADD COLUMN inr_amount REAL DEFAULT 300.0")
         c.execute("UPDATE pair_config SET inr_amount=300.0 WHERE inr_amount IS NULL")
+    
+    # Add new strategy metric columns to trades table
+    trade_cols = {row[1] for row in c.execute("PRAGMA table_info(trades)").fetchall()}
+    if "atr" not in trade_cols:
+        c.execute("ALTER TABLE trades ADD COLUMN atr REAL DEFAULT 0.0")
+    if "position_size" not in trade_cols:
+        c.execute("ALTER TABLE trades ADD COLUMN position_size REAL DEFAULT 0.0")
+    if "trailing_stop" not in trade_cols:
+        c.execute("ALTER TABLE trades ADD COLUMN trailing_stop REAL DEFAULT 0.0")
+    
+    # Add new strategy metric columns to paper_trades table
+    paper_cols = {row[1] for row in c.execute("PRAGMA table_info(paper_trades)").fetchall()}
+    if "atr" not in paper_cols:
+        c.execute("ALTER TABLE paper_trades ADD COLUMN atr REAL DEFAULT 0.0")
+    if "position_size" not in paper_cols:
+        c.execute("ALTER TABLE paper_trades ADD COLUMN position_size REAL DEFAULT 0.0")
+    if "trailing_stop" not in paper_cols:
+        c.execute("ALTER TABLE paper_trades ADD COLUMN trailing_stop REAL DEFAULT 0.0")
 
     c.execute("""
         CREATE TABLE IF NOT EXISTS trading_mode (
@@ -112,7 +133,10 @@ def init_db():
             opened_at     TEXT,
             closed_at     TEXT,
             strategy_note TEXT,
-            confidence    REAL DEFAULT 0.0    -- strategy confidence % (0-100)
+            confidence    REAL DEFAULT 0.0,    -- strategy confidence % (0-100)
+            atr           REAL DEFAULT 0.0,    -- Average True Range at entry
+            position_size REAL DEFAULT 0.0,    -- Dynamic position size in base currency
+            trailing_stop REAL DEFAULT 0.0     -- ATR-based trailing stop level
         )
     """)
 
@@ -130,15 +154,17 @@ def init_db():
 
 # ── Trades ───────────────────────────────────
 def insert_trade(pair, side, entry_price, quantity, leverage, tp_price, sl_price,
-                 order_id="", position_id="", strategy_note="", confidence=0.0):
+                 order_id="", position_id="", strategy_note="", confidence=0.0,
+                 atr=0.0, position_size=0.0, trailing_stop=0.0):
     conn = get_conn()
     conn.execute("""
         INSERT INTO trades
             (pair, side, entry_price, quantity, leverage, tp_price, sl_price,
-             order_id, position_id, opened_at, strategy_note, confidence)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+             order_id, position_id, opened_at, strategy_note, confidence, atr, position_size, trailing_stop)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, (pair, side, entry_price, quantity, leverage, tp_price, sl_price,
-          order_id, position_id, datetime.utcnow().isoformat(), strategy_note, confidence))
+          order_id, position_id, datetime.utcnow().isoformat(), strategy_note, confidence,
+          atr, position_size, trailing_stop))
     conn.commit()
     conn.close()
 
@@ -336,15 +362,17 @@ def init_paper_wallet_if_missing(balance: float):
 
 # ── Paper trades ────────────────────────────
 def insert_paper_trade(pair, side, entry_price, quantity, leverage, tp_price, sl_price,
-                       fee_paid=0.0, order_id="", position_id="", strategy_note="", confidence=0.0):
+                       fee_paid=0.0, order_id="", position_id="", strategy_note="", confidence=0.0,
+                       atr=0.0, position_size=0.0, trailing_stop=0.0):
     conn = get_conn()
     conn.execute("""
         INSERT INTO paper_trades
             (pair, side, entry_price, quantity, leverage, tp_price, sl_price,
-             fee_paid, order_id, position_id, opened_at, strategy_note, confidence)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+             fee_paid, order_id, position_id, opened_at, strategy_note, confidence, atr, position_size, trailing_stop)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, (pair, side, entry_price, quantity, leverage, tp_price, sl_price,
-          fee_paid, order_id, position_id, datetime.utcnow().isoformat(), strategy_note, confidence))
+          fee_paid, order_id, position_id, datetime.utcnow().isoformat(), strategy_note, confidence,
+          atr, position_size, trailing_stop))
     conn.commit()
     conn.close()
 

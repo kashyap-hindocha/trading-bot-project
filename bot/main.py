@@ -211,20 +211,26 @@ def _run_strategy(current_price: float):
         signal = result.get("signal")
         confidence = result.get("confidence", 0.0)
         auto_execute = result.get("auto_execute", False)
+        atr = result.get("atr", 0.0)
+        position_size = result.get("position_size", 0.0)
+        trailing_stop = result.get("trailing_stop", 0.0)
     else:
         signal = result
         confidence = 0.0
         auto_execute = False
+        atr = 0.0
+        position_size = 0.0
+        trailing_stop = 0.0
     
     if not signal:
         return
 
-    logger.info(f"Signal: {signal} at price {current_price} | Confidence: {confidence:.1f}% | Auto-execute: {auto_execute}")
-    db.log_event("INFO", f"Signal {signal} at {current_price} for {PAIR} | Confidence: {confidence:.1f}%")
+    logger.info(f"Signal: {signal} at price {current_price} | Confidence: {confidence:.1f}% | ATR: {atr:.4f} | Position Size: {position_size:.6f} | Trailing Stop: {trailing_stop:.2f} | Auto-execute: {auto_execute}")
+    db.log_event("INFO", f"Signal {signal} at {current_price} for {PAIR} | Confidence: {confidence:.1f}% | ATR: {atr:.4f} | Trailing Stop: {trailing_stop:.2f}%")
 
     try:
         if mode == "PAPER":
-            _run_paper_trade(current_price, signal, confidence)
+            _run_paper_trade(current_price, signal, confidence, atr, position_size, trailing_stop)
             return
 
         side       = "buy" if signal == "LONG" else "sell"
@@ -258,12 +264,12 @@ def _run_strategy(current_price: float):
                 break
 
         # Calculate TP/SL
-        tp_price, sl_price = strategy.calculate_tp_sl(current_price, signal)
+        tp_price, sl_price = strategy.calculate_tp_sl(current_price, signal, atr)
 
         # Place TP/SL
         if position_id:
             rest.place_tp_sl(PAIR, position_id, tp_price, sl_price)
-            logger.info(f"TP={tp_price} SL={sl_price} set for {signal} position {position_id}")
+            logger.info(f"TP={tp_price} SL={sl_price} Trailing Stop={trailing_stop:.2f} set for {signal} position {position_id}")
 
         # Save to DB
         db.insert_trade(
@@ -277,6 +283,10 @@ def _run_strategy(current_price: float):
             order_id=order_id,
             position_id=position_id,
             strategy_note=f"EMA crossover signal {signal} | Confidence: {confidence:.1f}% | Auto-execute: {auto_execute}",
+            confidence=confidence,
+            atr=atr,
+            position_size=position_size,
+            trailing_stop=trailing_stop,
         )
 
     except Exception as e:
@@ -284,7 +294,8 @@ def _run_strategy(current_price: float):
         db.log_event("ERROR", f"Order execution failed: {e}")
 
 
-def _run_paper_trade(current_price: float, signal: str, confidence: float = 0.0):
+def _run_paper_trade(current_price: float, signal: str, confidence: float = 0.0, 
+                     atr: float = 0.0, position_size: float = 0.0, trailing_stop: float = 0.0):
     side = "buy" if signal == "LONG" else "sell"
     pair_config = _get_pair_config()
     quantity, leverage, inr_amount, inr_rate = _resolve_trade_sizing(current_price, pair_config)
@@ -296,7 +307,7 @@ def _run_paper_trade(current_price: float, signal: str, confidence: float = 0.0)
         return
 
     # Calculate TP/SL
-    tp_price, sl_price = strategy.calculate_tp_sl(current_price, signal)
+    tp_price, sl_price = strategy.calculate_tp_sl(current_price, signal, atr)
 
     # Simulate order placement
     order_id = f"PAPER-{int(time.time() * 1000)}"
@@ -322,18 +333,22 @@ def _run_paper_trade(current_price: float, signal: str, confidence: float = 0.0)
         order_id=order_id,
         position_id=position_id,
         strategy_note=f"EMA crossover signal {signal} | Confidence: {confidence:.1f}%",
+        confidence=confidence,
+        atr=atr,
+        position_size=position_size,
+        trailing_stop=trailing_stop,
     )
 
     if inr_rate:
         logger.info(
-            f"PAPER entry {PAIR} | {signal} inr={inr_amount} rate={inr_rate:.4f} qty={quantity} lev={leverage} fee={entry_fee:.4f} | Confidence: {confidence:.1f}%"
+            f"PAPER entry {PAIR} | {signal} inr={inr_amount} rate={inr_rate:.4f} qty={quantity} lev={leverage} fee={entry_fee:.4f} | Confidence: {confidence:.1f}% | ATR: {atr:.4f} | Trailing Stop: {trailing_stop:.2f}"
         )
         db.log_event(
             "INFO",
             f"PAPER entry {PAIR} {signal} inr={inr_amount} rate={inr_rate:.4f} qty={quantity} lev={leverage} | Confidence: {confidence:.1f}%",
         )
     else:
-        logger.info(f"PAPER entry {PAIR} | {signal} qty={quantity} lev={leverage} fee={entry_fee:.4f} | Confidence: {confidence:.1f}%")
+        logger.info(f"PAPER entry {PAIR} | {signal} qty={quantity} lev={leverage} fee={entry_fee:.4f} | Confidence: {confidence:.1f}% | ATR: {atr:.4f} | Trailing Stop: {trailing_stop:.2f}")
         db.log_event("INFO", f"PAPER entry {PAIR} {signal} qty={quantity} lev={leverage} | Confidence: {confidence:.1f}%")
 
 

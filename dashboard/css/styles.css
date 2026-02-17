@@ -454,6 +454,12 @@ tbody td {
 .pnl-pos { color: var(--green); }
 .pnl-neg { color: var(--red); }
 
+/* ── Confidence Styling ── */
+.conf-cell { font-weight: 600; }
+.conf-cell.high   { color: var(--green); }
+.conf-cell.medium { color: var(--yellow); }
+.conf-cell.low    { color: var(--red); }
+
 /* ── LOGS ── */
 .logs-panel {
   background: var(--bg2);

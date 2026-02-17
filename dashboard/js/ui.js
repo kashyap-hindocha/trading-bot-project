@@ -38,7 +38,7 @@ function renderPaperStats(s, trades) {
 function renderTrades(trades) {
   const tbody = document.getElementById('tradesBody');
   if (!trades.length) { 
-    tbody.innerHTML = '<tr><td colspan="11" class="loading">No trades yet</td></tr>'; 
+    tbody.innerHTML = '<tr><td colspan="14" class="loading">No trades yet</td></tr>'; 
     return; 
   }
   tbody.innerHTML = trades.map(t => {
@@ -46,6 +46,11 @@ function renderTrades(trades) {
     const pnlCls = t.pnl > 0 ? 'pnl-pos' : t.pnl < 0 ? 'pnl-neg' : '';
     const opened = t.opened_at ? t.opened_at.slice(0, 16).replace('T', ' ') : '—';
     const posType = t.side === 'buy' ? 'LONG' : 'SHORT';
+    const confidence = t.confidence != null ? parseFloat(t.confidence).toFixed(1) : '—';
+    const atr = t.atr != null ? parseFloat(t.atr).toFixed(4) : '—';
+    const trailing_stop = t.trailing_stop != null ? parseFloat(t.trailing_stop).toFixed(2) : '—';
+    const confClass = confidence > 0 && confidence !== '—' ? 
+                      (parseFloat(confidence) >= 80 ? 'high' : parseFloat(confidence) >= 60 ? 'medium' : 'low') : '';
     return `<tr>
       <td>${t.pair}</td>
       <td><span class="badge ${t.side}">${posType}</span></td>
@@ -57,6 +62,9 @@ function renderTrades(trades) {
       <td>${t.leverage ?? '—'}x</td>
       <td class="${pnlCls}">${pnl !== '—' ? (t.pnl > 0 ? '+' : '') + pnl : '—'}</td>
       <td><span class="badge ${t.status}">${t.status}</span></td>
+      <td class="conf-cell ${confClass}">${confidence}%</td>
+      <td>${atr}</td>
+      <td>${trailing_stop}</td>
       <td>${opened}</td>
     </tr>`;
   }).join('');
@@ -65,7 +73,7 @@ function renderTrades(trades) {
 function renderPaperTrades(trades) {
   const tbody = document.getElementById('paperTradesBody');
   if (!trades.length) { 
-    tbody.innerHTML = '<tr><td colspan="11" class="loading">No paper trades yet</td></tr>'; 
+    tbody.innerHTML = '<tr><td colspan="14" class="loading">No paper trades yet</td></tr>'; 
     return; 
   }
   tbody.innerHTML = trades.map(t => {
@@ -73,6 +81,11 @@ function renderPaperTrades(trades) {
     const pnlCls = t.pnl > 0 ? 'pnl-pos' : t.pnl < 0 ? 'pnl-neg' : '';
     const opened = t.opened_at ? t.opened_at.slice(0, 16).replace('T', ' ') : '—';
     const posType = t.side === 'buy' ? 'LONG' : 'SHORT';
+    const confidence = t.confidence != null ? parseFloat(t.confidence).toFixed(1) : '—';
+    const atr = t.atr != null ? parseFloat(t.atr).toFixed(4) : '—';
+    const trailing_stop = t.trailing_stop != null ? parseFloat(t.trailing_stop).toFixed(2) : '—';
+    const confClass = confidence > 0 && confidence !== '—' ? 
+                      (parseFloat(confidence) >= 80 ? 'high' : parseFloat(confidence) >= 60 ? 'medium' : 'low') : '';
     return `<tr>
       <td>${t.pair}</td>
       <td><span class="badge ${t.side}">${posType}</span></td>
@@ -84,6 +97,9 @@ function renderPaperTrades(trades) {
       <td>${t.leverage ?? '—'}x</td>
       <td class="${pnlCls}">${pnl !== '—' ? (t.pnl > 0 ? '+' : '') + pnl : '—'}</td>
       <td><span class="badge ${t.status}">${t.status}</span></td>
+      <td class="conf-cell ${confClass}">${confidence}%</td>
+      <td>${atr}</td>
+      <td>${trailing_stop}</td>
       <td>${opened}</td>
     </tr>`;
   }).join('');
