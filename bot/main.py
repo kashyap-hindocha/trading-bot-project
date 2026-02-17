@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import db
-import strategy
+import strategy_manager
 from coindcx import CoinDCXREST, CoinDCXSocket
 
 load_dotenv("/home/ubuntu/trading-bot/.env")
@@ -38,8 +38,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ── Parse command-line arguments ─────────────
-PAIR     = strategy.CONFIG["pair"]      # Default pair
-INTERVAL = strategy.CONFIG["interval"]
+PAIR     = "B-BTC_USDT"  # Default pair
+INTERVAL = "5m"
 
 if len(sys.argv) > 1:
     # Allow overriding pair from command line: python main.py B-ETH_USDT
@@ -52,6 +52,10 @@ API_SECRET = os.getenv("COINDCX_API_SECRET")
 
 rest   = CoinDCXREST(API_KEY, API_SECRET)
 socket = CoinDCXSocket(API_KEY, API_SECRET)
+
+# Initialize strategy manager and set default strategy
+strategy_manager.strategy_manager.set_active_strategy("enhanced_v2")
+logger.info(f"Active strategy: {strategy_manager.strategy_manager.get_active_strategy_name()}")
 
 TAKER_FEE_RATE = 0.0005  # 0.05% taker fee
 
@@ -118,10 +122,10 @@ def _calc_pnl(side: str, entry_price: float, exit_price: float, quantity: float,
         return (exit_price - entry_price) * quantity * leverage
     return (entry_price - exit_price) * quantity * leverage
 
-def _resolve_trade_sizing(current_price: float, pair_config: dict | None):
-    leverage = pair_config["leverage"] if pair_config else strategy.CONFIG["leverage"]
-    base_quantity = pair_config["quantity"] if pair_config else strategy.CONFIG["quantity"]
-    inr_amount = pair_config.get("inr_amount") if pair_config else strategy.CONFIG.get("inr_amount")
+def _resolve_trade_sizing(current_price: float, pair_config: dict | None, strategy_config: dict | None = None):
+    leverage = pair_config["leverage"] if pair_config else (strategy_config.get("leverage", 5) if strategy_config else 5)
+    base_quantity = pair_config["quantity"] if pair_config else (strategy_config.get("quantity", 0.001) if strategy_config else 0.001)
+    inr_amount = pair_config.get("inr_amount") if pair_config else (strategy_config.get("inr_amount", 300.0) if strategy_config else 300.0)
     inr_amount = float(inr_amount) if inr_amount not in (None, "") else None
 
     if inr_amount and current_price > 0:
@@ -201,10 +205,12 @@ def _run_strategy(current_price: float):
     # Check max open trades limit PER-PAIR (not total across all pairs)
     open_trades = db.get_open_paper_trades() if mode == "PAPER" else db.get_open_trades()
     pair_open_trades = [t for t in open_trades if t.get("pair") == PAIR]
-    if len(pair_open_trades) >= strategy.CONFIG["max_open_trades"]:
+    active_strategy = strategy_manager.strategy_manager.get_active_strategy()
+    max_open_trades = active_strategy.get_config().get("max_open_trades", 1) if active_strategy else 1
+    if len(pair_open_trades) >= max_open_trades:
         return
 
-    result = strategy.evaluate(candle_buffer, return_confidence=True)
+    result = strategy_manager.strategy_manager.evaluate(candle_buffer, return_confidence=True)
     
     # Handle both old format (string) and new format (dict)
     if isinstance(result, dict):
@@ -238,7 +244,10 @@ def _run_strategy(current_price: float):
         
         # Get pair-specific config from database, fallback to strategy defaults
         pair_config = _get_pair_config()
-        quantity, leverage, inr_amount, inr_rate = _resolve_trade_sizing(current_price, pair_config)
+        active_strategy = strategy_manager.strategy_manager.get_active_strategy()
+        strategy_config = active_strategy.get_config() if active_strategy else {}
+        
+        quantity, leverage, inr_amount, inr_rate = _resolve_trade_sizing(current_price, pair_config, strategy_config)
 
         if inr_rate:
             logger.info(
@@ -264,7 +273,8 @@ def _run_strategy(current_price: float):
                 break
 
         # Calculate TP/SL
-        tp_price, sl_price = strategy.calculate_tp_sl(current_price, signal, atr)
+        active_strategy = strategy_manager.strategy_manager.get_active_strategy()
+        tp_price, sl_price = active_strategy.calculate_tp_sl(current_price, signal, atr) if active_strategy else (0, 0)
 
         # Place TP/SL
         if position_id:
@@ -282,7 +292,7 @@ def _run_strategy(current_price: float):
             sl_price=sl_price,
             order_id=order_id,
             position_id=position_id,
-            strategy_note=f"EMA crossover signal {signal} | Confidence: {confidence:.1f}% | Auto-execute: {auto_execute}",
+            strategy_note=f"{active_strategy.get_name() if active_strategy else 'Unknown'} signal {signal} | Confidence: {confidence:.1f}% | Auto-execute: {auto_execute}",
             confidence=confidence,
             atr=atr,
             position_size=position_size,
@@ -298,7 +308,9 @@ def _run_paper_trade(current_price: float, signal: str, confidence: float = 0.0,
                      atr: float = 0.0, position_size: float = 0.0, trailing_stop: float = 0.0):
     side = "buy" if signal == "LONG" else "sell"
     pair_config = _get_pair_config()
-    quantity, leverage, inr_amount, inr_rate = _resolve_trade_sizing(current_price, pair_config)
+    active_strategy = strategy_manager.strategy_manager.get_active_strategy()
+    strategy_config = active_strategy.get_config() if active_strategy else None
+    quantity, leverage, inr_amount, inr_rate = _resolve_trade_sizing(current_price, pair_config, strategy_config)
 
     wallet_balance = db.get_paper_wallet_balance()
     if wallet_balance is None or wallet_balance <= 0:
@@ -307,7 +319,7 @@ def _run_paper_trade(current_price: float, signal: str, confidence: float = 0.0,
         return
 
     # Calculate TP/SL
-    tp_price, sl_price = strategy.calculate_tp_sl(current_price, signal, atr)
+    tp_price, sl_price = active_strategy.calculate_tp_sl(current_price, signal, atr) if active_strategy else (0, 0)
 
     # Simulate order placement
     order_id = f"PAPER-{int(time.time() * 1000)}"
@@ -332,7 +344,7 @@ def _run_paper_trade(current_price: float, signal: str, confidence: float = 0.0,
         fee_paid=entry_fee,
         order_id=order_id,
         position_id=position_id,
-        strategy_note=f"EMA crossover signal {signal} | Confidence: {confidence:.1f}%",
+        strategy_note=f"{active_strategy.get_name() if active_strategy else 'Unknown'} signal {signal} | Confidence: {confidence:.1f}%",
         confidence=confidence,
         atr=atr,
         position_size=position_size,

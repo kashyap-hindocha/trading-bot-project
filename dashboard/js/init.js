@@ -11,6 +11,7 @@ document.addEventListener('DOMContentLoaded', async function() {
   await loadPairs();
   populatePairSelectors(); // Populate pair dropdowns
   await fetchMode();
+  await loadStrategies();
   
   // Then fetch all data
   await checkBotStatus();

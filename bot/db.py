@@ -36,6 +36,7 @@ def init_db():
             position_id   TEXT,
             opened_at     TEXT,
             closed_at     TEXT,
+            strategy_name TEXT DEFAULT 'enhanced_v2', -- Strategy used for this trade
             strategy_note TEXT,
             confidence    REAL DEFAULT 0.0,    -- strategy confidence % (0-100)
             atr           REAL DEFAULT 0.0,    -- Average True Range at entry
@@ -88,6 +89,8 @@ def init_db():
         c.execute("ALTER TABLE trades ADD COLUMN position_size REAL DEFAULT 0.0")
     if "trailing_stop" not in trade_cols:
         c.execute("ALTER TABLE trades ADD COLUMN trailing_stop REAL DEFAULT 0.0")
+    if "strategy_name" not in trade_cols:
+        c.execute("ALTER TABLE trades ADD COLUMN strategy_name TEXT DEFAULT 'enhanced_v2'")
     
     # Add new strategy metric columns to paper_trades table
     paper_cols = {row[1] for row in c.execute("PRAGMA table_info(paper_trades)").fetchall()}
@@ -97,6 +100,8 @@ def init_db():
         c.execute("ALTER TABLE paper_trades ADD COLUMN position_size REAL DEFAULT 0.0")
     if "trailing_stop" not in paper_cols:
         c.execute("ALTER TABLE paper_trades ADD COLUMN trailing_stop REAL DEFAULT 0.0")
+    if "strategy_name" not in paper_cols:
+        c.execute("ALTER TABLE paper_trades ADD COLUMN strategy_name TEXT DEFAULT 'enhanced_v2'")
 
     c.execute("""
         CREATE TABLE IF NOT EXISTS trading_mode (
@@ -132,6 +137,7 @@ def init_db():
             position_id   TEXT,
             opened_at     TEXT,
             closed_at     TEXT,
+            strategy_name TEXT DEFAULT 'enhanced_v2', -- Strategy used for this trade
             strategy_note TEXT,
             confidence    REAL DEFAULT 0.0,    -- strategy confidence % (0-100)
             atr           REAL DEFAULT 0.0,    -- Average True Range at entry
@@ -154,16 +160,16 @@ def init_db():
 
 # ── Trades ───────────────────────────────────
 def insert_trade(pair, side, entry_price, quantity, leverage, tp_price, sl_price,
-                 order_id="", position_id="", strategy_note="", confidence=0.0,
+                 order_id="", position_id="", strategy_name="enhanced_v2", strategy_note="", confidence=0.0,
                  atr=0.0, position_size=0.0, trailing_stop=0.0):
     conn = get_conn()
     conn.execute("""
         INSERT INTO trades
             (pair, side, entry_price, quantity, leverage, tp_price, sl_price,
-             order_id, position_id, opened_at, strategy_note, confidence, atr, position_size, trailing_stop)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             order_id, position_id, opened_at, strategy_name, strategy_note, confidence, atr, position_size, trailing_stop)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, (pair, side, entry_price, quantity, leverage, tp_price, sl_price,
-          order_id, position_id, datetime.utcnow().isoformat(), strategy_note, confidence,
+          order_id, position_id, datetime.utcnow().isoformat(), strategy_name, strategy_note, confidence,
           atr, position_size, trailing_stop))
     conn.commit()
     conn.close()
@@ -362,16 +368,16 @@ def init_paper_wallet_if_missing(balance: float):
 
 # ── Paper trades ────────────────────────────
 def insert_paper_trade(pair, side, entry_price, quantity, leverage, tp_price, sl_price,
-                       fee_paid=0.0, order_id="", position_id="", strategy_note="", confidence=0.0,
+                       fee_paid=0.0, order_id="", position_id="", strategy_name="enhanced_v2", strategy_note="", confidence=0.0,
                        atr=0.0, position_size=0.0, trailing_stop=0.0):
     conn = get_conn()
     conn.execute("""
         INSERT INTO paper_trades
             (pair, side, entry_price, quantity, leverage, tp_price, sl_price,
-             fee_paid, order_id, position_id, opened_at, strategy_note, confidence, atr, position_size, trailing_stop)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             fee_paid, order_id, position_id, opened_at, strategy_name, strategy_note, confidence, atr, position_size, trailing_stop)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, (pair, side, entry_price, quantity, leverage, tp_price, sl_price,
-          fee_paid, order_id, position_id, datetime.utcnow().isoformat(), strategy_note, confidence,
+          fee_paid, order_id, position_id, datetime.utcnow().isoformat(), strategy_name, strategy_note, confidence,
           atr, position_size, trailing_stop))
     conn.commit()
     conn.close()

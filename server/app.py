@@ -6,8 +6,8 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 from datetime import datetime, timezone, timedelta
 import db
+import strategy_manager
 from coindcx import CoinDCXREST
-import strategy
 
 # IST timezone (UTC+5:30)
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -490,6 +490,30 @@ def trading_mode():
     return jsonify({"success": True, "mode": mode})
 
 
+@app.route("/api/strategies", methods=["GET", "POST"])
+def strategies():
+    if request.method == "GET":
+        available_strategies = strategy_manager.strategy_manager.get_available_strategies()
+        active_strategy = strategy_manager.strategy_manager.get_active_strategy_name()
+        return jsonify({
+            "strategies": [{"name": s["name"], "description": s["description"]} for s in available_strategies],
+            "active": active_strategy
+        })
+
+    data = request.get_json() or {}
+    strategy_name = str(data.get("strategy", "")).strip()
+    
+    if not strategy_name:
+        return jsonify({"error": "strategy name is required"}), 400
+
+    try:
+        strategy_manager.strategy_manager.set_active_strategy(strategy_name)
+        db.log_event("INFO", f"Active strategy changed to {strategy_name}")
+        return jsonify({"success": True, "strategy": strategy_name})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
 @app.route("/api/paper/balance")
 def paper_balance():
     return jsonify({"balance": db.get_paper_wallet_balance()})
@@ -512,7 +536,9 @@ def paper_reset():
 def candles():
     try:
         pair = request.args.get("pair", "").strip()
-        interval = request.args.get("interval", strategy.CONFIG["interval"]).strip()
+        active_strategy = strategy_manager.strategy_manager.get_active_strategy()
+        default_interval = active_strategy.get_config().get("interval", "1m") if active_strategy else "1m"
+        interval = request.args.get("interval", default_interval).strip()
         limit = int(request.args.get("limit", 200))
 
         if not pair:
@@ -557,16 +583,21 @@ def _compute_readiness(closes):
     Compute readiness as PROXIMITY to trade conditions.
     Shows how close we are to executing (90% = ready to execute).
     """
-    ema_fast_series = _ema(closes, strategy.CONFIG["ema_fast"])
-    ema_slow_series = _ema(closes, strategy.CONFIG["ema_slow"])
+    active_strategy = strategy_manager.strategy_manager.get_active_strategy()
+    if not active_strategy:
+        return None
+    
+    config = active_strategy.get_config()
+    ema_fast_series = _ema(closes, config["ema_fast"])
+    ema_slow_series = _ema(closes, config["ema_slow"])
     if not ema_fast_series or not ema_slow_series:
         return None
 
     ema_fast = ema_fast_series[-1]
     ema_slow = ema_slow_series[-1]
-    rsi = _rsi(closes, strategy.CONFIG["rsi_period"])
-    overbought = strategy.CONFIG["rsi_overbought"]
-    oversold = strategy.CONFIG["rsi_oversold"]
+    rsi = _rsi(closes, config["rsi_period"])
+    overbought = config["rsi_overbought"]
+    oversold = config["rsi_oversold"]
 
     price = closes[-1] if closes else 0
     gap = abs(ema_fast - ema_slow)
@@ -613,9 +644,12 @@ def signal_readiness():
 
         client = CoinDCXREST("", "")
         results = []
+        active_strategy = strategy_manager.strategy_manager.get_active_strategy()
+        interval = active_strategy.get_config().get("interval", "1m") if active_strategy else "1m"
+        
         for pair in pairs[:20]:
             try:
-                candles = client.get_candles(pair, strategy.CONFIG["interval"], limit=150)
+                candles = client.get_candles(pair, interval, limit=150)
                 closes = [c.get("close") for c in candles if c.get("close") is not None]
                 readiness = _compute_readiness(closes)
                 if readiness:

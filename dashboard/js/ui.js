@@ -10,6 +10,57 @@ function renderMode() {
   btn.disabled = false;
 }
 
+// ── Strategy Management ──
+async function loadStrategies() {
+  try {
+    const response = await fetch('/api/strategies');
+    const data = await response.json();
+    const select = document.getElementById('strategySelect');
+    
+    if (data.strategies && data.strategies.length > 0) {
+      select.innerHTML = data.strategies.map(s => 
+        `<option value="${s.name}">${s.name}</option>`
+      ).join('');
+      select.value = data.active || '';
+    } else {
+      select.innerHTML = '<option value="">No strategies available</option>';
+    }
+    select.disabled = false;
+  } catch (error) {
+    console.error('Failed to load strategies:', error);
+    const select = document.getElementById('strategySelect');
+    select.innerHTML = '<option value="">Error loading strategies</option>';
+  }
+}
+
+async function changeStrategy() {
+  const select = document.getElementById('strategySelect');
+  const strategyName = select.value;
+  
+  if (!strategyName) return;
+  
+  try {
+    const response = await fetch('/api/strategies', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ strategy: strategyName })
+    });
+    
+    if (response.ok) {
+      console.log(`Strategy changed to: ${strategyName}`);
+      // Optionally reload data to reflect new strategy
+      loadData();
+    } else {
+      console.error('Failed to change strategy');
+      // Reset to previous value
+      loadStrategies();
+    }
+  } catch (error) {
+    console.error('Error changing strategy:', error);
+    loadStrategies();
+  }
+}
+
 // ── Stats Rendering ──
 function renderStats(s) {
   const pnl = s.total_pnl ?? 0;
