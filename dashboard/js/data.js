@@ -171,7 +171,8 @@ async function loadPairs() {
     });
 
     if (!allPairs.length) {
-      document.getElementById('coinGrid').innerHTML = '<div class="loading">No pairs available</div>';
+      // REMOVED: coinGrid element no longer exists
+      console.warn('No pairs available');
       return;
     }
 
@@ -182,14 +183,14 @@ async function loadPairs() {
     // Update readiness FIRST, then render with data
     await updateReadiness();
 
-    renderPairs();
+    renderPairs(); // Stubbed out - does nothing now
     renderFavorites();
     updatePairSelect();
     const btn = document.getElementById('applyCoinsBtn');
     if (btn) btn.disabled = false;
   } catch (e) {
     console.error('Error loading pairs:', e);
-    document.getElementById('coinGrid').innerHTML = '<div class="loading">Error loading pairs</div>';
+    // REMOVED: coinGrid element no longer exists
   }
 }
 
