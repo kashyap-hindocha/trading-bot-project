@@ -157,7 +157,8 @@ async function loadPairSignals() {
         if (!res.ok) return;
 
         const data = await res.json();
-        pairSignals = data.pairs || [];
+        // API returns a plain array; handle both array and {pairs:[]} formats
+        pairSignals = Array.isArray(data) ? data : (data.pairs || []);
 
         // Populate pair selector for SINGLE mode
         populatePairModeSelector();
