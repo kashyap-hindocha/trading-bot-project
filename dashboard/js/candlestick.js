@@ -12,7 +12,7 @@ let priceChartPair = '';
 function initCandleChart() {
   const container = document.getElementById('candleChart');
   if (!container) return;
-  
+
   candleChart = LightweightCharts.createChart(container, {
     layout: {
       textColor: '#4a6070',
@@ -52,10 +52,10 @@ function initCandleChart() {
 // Populate pair dropdowns
 function populatePairSelectors() {
   if (!allPairs || allPairs.length === 0) return;
-  
+
   const candleSelect = document.getElementById('candlePairSelect');
   const priceSelect = document.getElementById('priceChartPairSelect');
-  
+
   if (candleSelect && candleSelect.children.length <= 1) {
     allPairs.forEach(p => {
       const opt = document.createElement('option');
@@ -70,7 +70,7 @@ function populatePairSelectors() {
       updateCandleChart(); // Load data immediately
     }
   }
-  
+
   if (priceSelect && priceSelect.children.length <= 1) {
     allPairs.forEach(p => {
       const opt = document.createElement('option');
@@ -85,10 +85,10 @@ function populatePairSelectors() {
 async function updateCandleChart() {
   try {
     if (!selectedCandlePair) return;
-    
+
     const pair = selectedCandlePair;
     const interval = currentTimeframe;
-    
+
     // Fetch candles from API
     const response = await fetch(`${API}/api/candles?pair=${encodeURIComponent(pair)}&interval=${interval}&limit=100`);
     if (!response.ok) return;
@@ -99,37 +99,42 @@ async function updateCandleChart() {
     // Format data for lightweight-charts
     const candleData = data.map((candle, index) => {
       try {
-        // Parse timestamp - handle different formats
         let time = null;
-        
-        if (candle.timestamp) {
-          const date = new Date(candle.timestamp);
-          if (!isNaN(date.getTime())) {
-            time = Math.floor(date.getTime() / 1000);
+        const ts = candle.timestamp ?? candle.time;
+
+        if (ts !== undefined && ts !== null && ts !== '') {
+          if (typeof ts === 'number') {
+            // CoinDCX returns Unix milliseconds
+            time = ts > 1e10 ? Math.floor(ts / 1000) : Math.floor(ts);
+          } else {
+            // Try parsing as date string
+            const date = new Date(ts);
+            if (!isNaN(date.getTime())) {
+              time = Math.floor(date.getTime() / 1000);
+            }
           }
         }
-        
-        // Fallback: use index-based time if timestamp invalid
+
+        // Fallback: generate approximate time if timestamp invalid
         if (!time) {
-          // Generate approximate time 5 minutes apart
           const now = Math.floor(Date.now() / 1000);
-          time = now - (data.length - index - 1) * 300; // 5m intervals backwards
+          time = now - (data.length - index - 1) * 300;
         }
-        
+
         const o = parseFloat(candle.open);
         const h = parseFloat(candle.high);
         const l = parseFloat(candle.low);
         const c = parseFloat(candle.close);
-        
-        // Skip if no valid OHLC data
+
         if (isNaN(o) || isNaN(h) || isNaN(l) || isNaN(c)) return null;
-        
+
         return { time, open: o, high: h, low: l, close: c };
       } catch (e) {
         console.error('Candle parse error:', e, candle);
         return null;
       }
-    }).filter(c => c !== null); // Remove invalid entries
+    }).filter(c => c !== null);
+
 
     // Set data on series
     if (candleData.length > 0) {
@@ -141,7 +146,7 @@ async function updateCandleChart() {
       const last = candleData[candleData.length - 1];
       const baseCoin = pair.replace('B-', '').replace('_USDT', '');
       const readiness = pairReadiness[pair]?.readiness || 0;
-      document.getElementById('candleInfo').textContent = 
+      document.getElementById('candleInfo').textContent =
         `${baseCoin} | O: ${last.open.toFixed(4)} H: ${last.high.toFixed(4)} L: ${last.low.toFixed(4)} C: ${last.close.toFixed(4)} | Confidence: ${readiness.toFixed(1)}%`;
     } else {
       console.warn('No valid candle data after parsing');

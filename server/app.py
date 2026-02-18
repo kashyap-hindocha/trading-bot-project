@@ -560,26 +560,6 @@ def paper_reset():
         return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
 
-@app.route("/api/candles")
-def candles():
-    try:
-        pair = request.args.get("pair", "").strip()
-        active_strategy = strategy_manager.strategy_manager.get_active_strategy()
-        default_interval = active_strategy.get_config().get("interval", "1m") if active_strategy else "1m"
-        interval = request.args.get("interval", default_interval).strip()
-        limit = int(request.args.get("limit", 200))
-
-        if not pair:
-            return jsonify({"error": "pair is required"}), 400
-
-        limit = min(max(limit, 50), 300)
-        client = CoinDCXREST("", "")
-        data = client.get_candles(pair, interval, limit=limit)
-        return jsonify(data)
-    except Exception as e:
-        import traceback
-        app.logger.error(f"Candles failed: {e}")
-        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
 
 def _ema(values, period):
@@ -1225,6 +1205,7 @@ def live_positions():
             app.logger.warning(f"Could not fetch TP/SL orders: {e}")
 
         # Normalize positions to match frontend format
+        # Only include positions with actual quantity (truly open)
         result = []
         for pos in positions:
             # CoinDCX field names vary — handle both snake_case and camelCase
@@ -1241,6 +1222,13 @@ def live_positions():
             unrealized_pnl = pos.get("unrealized_pnl") or pos.get("unrealizedPnl") or pos.get("pnl") or 0
             margin = pos.get("margin") or pos.get("initial_margin") or 0
             position_id = str(pos.get("id") or pos.get("position_id") or pos.get("positionId") or "")
+
+            # Skip positions with zero quantity (already closed)
+            try:
+                if float(quantity) == 0:
+                    continue
+            except (TypeError, ValueError):
+                continue
 
             tp_sl = tp_sl_map.get(position_id, {})
 
