@@ -127,14 +127,24 @@ async function updateCandleChart() {
       }
     }).filter(c => c !== null);
 
+    // lightweight-charts requires data sorted oldest→newest (ascending)
+    // CoinDCX returns newest→oldest, so we must sort
+    candleData.sort((a, b) => a.time - b.time);
 
-    // Set data on series
-    if (candleData.length > 0) {
-      candleSeries.setData(candleData);
+    // Remove duplicate timestamps (lightweight-charts throws on dupes)
+    const seen = new Set();
+    const dedupedData = candleData.filter(c => {
+      if (seen.has(c.time)) return false;
+      seen.add(c.time);
+      return true;
+    });
+
+    if (dedupedData.length > 0) {
+      candleSeries.setData(dedupedData);
       candleChart.timeScale().fitContent();
 
       // Update info with current price and confidence
-      const last = candleData[candleData.length - 1];
+      const last = dedupedData[dedupedData.length - 1];
       const baseCoin = pair.replace('B-', '').replace('_USDT', '');
       const readiness = pairReadiness[pair]?.readiness || 0;
       document.getElementById('candleInfo').textContent =
