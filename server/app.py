@@ -943,6 +943,36 @@ def pairs_config_disable_all():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/pairs/prices")
+def pairs_prices():
+    """Get current prices for all available pairs."""
+    try:
+        client = CoinDCXREST("", "")
+        prices = {}
+        
+        # Get all pair configs to know which pairs we care about
+        all_configs = db.get_all_pair_configs()
+        pairs_list = [cfg["pair"] for cfg in all_configs]
+        
+        # If no configs, get top pairs
+        if not pairs_list:
+            pairs_list = ["B-BTC_USDT", "B-ETH_USDT", "B-SOL_USDT", "B-BNB_USDT"]
+        
+        # Fetch current candle for each pair to get latest price
+        for pair in pairs_list[:50]:  # Limit to 50 pairs
+            try:
+                candles = client.get_candles(pair, "1m", limit=1)
+                if candles and len(candles) > 0:
+                    prices[pair] = candles[-1].get("close", 0)
+            except Exception:
+                continue
+        
+        return jsonify(prices)
+    except Exception as e:
+        app.logger.error(f"Error fetching pair prices: {e}")
+        return jsonify({})
+
+
 @app.route("/api/pairs/active")
 def pairs_active():
     """Get currently active trading pairs with open positions."""

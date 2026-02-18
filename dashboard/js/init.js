@@ -34,5 +34,16 @@ document.addEventListener('DOMContentLoaded', async function () {
   setInterval(updateReadiness, REFRESH_MS * 2);
   setInterval(updatePriceChart, REFRESH_MS * 2);
   setInterval(updateCandleChart, 10000); // Refresh candlesticks every 10s
+  
+  // Refresh pair prices every 30 seconds for quantity calculations
+  setInterval(async () => {
+    if (typeof loadCurrentPrices === 'function') {
+      await loadCurrentPrices();
+      // Re-render pair manager to update quantities
+      if (typeof renderPairManager === 'function') {
+        renderPairManager();
+      }
+    }
+  }, 30000);
 });
 
