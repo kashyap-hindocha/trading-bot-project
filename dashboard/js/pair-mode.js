@@ -151,10 +151,18 @@ function updatePairModeUI() {
 }
 
 // Load and render pair signals (for horizontal Trading Pairs section)
+// Uses recursive setTimeout to wait 7 seconds after each response
 async function loadPairSignals() {
     try {
+        const startTime = Date.now();
         const res = await fetch(`${API}/api/pair_signals`);
-        if (!res.ok) return;
+        const fetchTime = ((Date.now() - startTime) / 1000).toFixed(1);
+        
+        if (!res.ok) {
+            console.warn('Pair signals request failed, retrying in 7 seconds...');
+            setTimeout(loadPairSignals, 7000);
+            return;
+        }
 
         const data = await res.json();
         // API returns a plain array; handle both array and {pairs:[]} formats
@@ -165,8 +173,13 @@ async function loadPairSignals() {
 
         // Render the horizontal pair cards
         renderPairList();
+        
+        console.debug(`Pair signals loaded in ${fetchTime}s, scheduling next call in 7s`);
     } catch (err) {
         console.error('Failed to load pair signals:', err);
+    } finally {
+        // Schedule next call 7 seconds after response received
+        setTimeout(loadPairSignals, 7000);
     }
 }
 

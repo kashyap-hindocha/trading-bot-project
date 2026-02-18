@@ -27,7 +27,7 @@ document.addEventListener('DOMContentLoaded', async function () {
   // Set up refresh intervals
   setInterval(fetchAll, REFRESH_MS);
   setInterval(checkBotStatus, REFRESH_MS);
-  setInterval(loadPairSignals, REFRESH_MS); // Refresh pair signals every cycle
+  // loadPairSignals uses recursive setTimeout (already started above, handles its own scheduling)
   setInterval(updateReadiness, REFRESH_MS * 2);
   setInterval(updatePriceChart, REFRESH_MS * 2);
   setInterval(updateCandleChart, 10000); // Refresh candlesticks every 10s
