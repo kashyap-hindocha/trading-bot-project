@@ -325,8 +325,8 @@ let selectedOpenTrade = null;
 
 async function fetchOpenTrades() {
   try {
-    // Always follow global trading mode semantics:
-    // REAL -> live platform positions, PAPER -> paper trades in DB
+    // Always follow global trading mode semantics using app-managed trades:
+    // REAL -> real trades in DB, PAPER -> paper trades in DB
     openTradesMode = tradingMode === 'PAPER' ? 'paper' : 'real';
 
     const badge = document.getElementById('openTradesModeBadge');
@@ -337,7 +337,7 @@ async function fetchOpenTrades() {
 
     const endpoint = openTradesMode === 'paper'
       ? '/api/paper/trades/open'
-      : '/api/live/positions';
+      : '/api/trades/open';
 
     const resp = await fetch(API + endpoint);
     const data = await resp.json();
