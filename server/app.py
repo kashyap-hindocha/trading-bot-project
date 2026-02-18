@@ -945,28 +945,46 @@ def pairs_config_disable_all():
 
 @app.route("/api/pairs/prices")
 def pairs_prices():
-    """Get current prices for all available pairs."""
+    """Get current prices for all available pairs from latest signal data."""
     try:
-        client = CoinDCXREST("", "")
+        # Get prices from the most recent pair_signals calculation
+        # This reuses the signal calculation which already fetches candles
+        enabled_pairs = db.get_enabled_pairs()
+        
+        if not enabled_pairs:
+            return jsonify({})
+        
+        from dotenv import load_dotenv
+        load_dotenv("/home/ubuntu/trading-bot/.env")
+        key = os.getenv("COINDCX_API_KEY")
+        secret = os.getenv("COINDCX_API_SECRET")
+        
+        # Use authenticated client for market data
+        if key and secret:
+            client = CoinDCXREST(key, secret)
+        else:
+            # Fallback to unauthenticated (may have limited access)
+            client = CoinDCXREST("", "")
+        
         prices = {}
         
-        # Get all pair configs to know which pairs we care about
-        all_configs = db.get_all_pair_configs()
-        pairs_list = [cfg["pair"] for cfg in all_configs]
-        
-        # If no configs, get top pairs
-        if not pairs_list:
-            pairs_list = ["B-BTC_USDT", "B-ETH_USDT", "B-SOL_USDT", "B-BNB_USDT"]
-        
-        # Fetch current candle for each pair to get latest price
-        for pair in pairs_list[:50]:  # Limit to 50 pairs
+        # Fetch prices for all enabled pairs
+        for cfg in enabled_pairs[:20]:  # Limit to 20 pairs for speed
+            pair = cfg.get("pair")
+            if not pair:
+                continue
+                
             try:
+                # Get latest 1-minute candle for current price
                 candles = client.get_candles(pair, "1m", limit=1)
                 if candles and len(candles) > 0:
-                    prices[pair] = candles[-1].get("close", 0)
-            except Exception:
+                    prices[pair] = float(candles[-1].get("close", 0))
+                    app.logger.debug(f"Price for {pair}: {prices[pair]}")
+            except Exception as e:
+                app.logger.warning(f"Failed to get price for {pair}: {e}")
                 continue
         
+        app.logger.info(f"Loaded prices for {len(prices)} pairs")
         return jsonify(prices)
     except Exception as e:
         app.logger.error(f"Error fetching pair prices: {e}")
