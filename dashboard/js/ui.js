@@ -237,7 +237,6 @@ function renderFavorites() {
       </div>
     `;
   }).join('');
-  }).join('');
 }
 
 function updateFavoritesDisplay() {
