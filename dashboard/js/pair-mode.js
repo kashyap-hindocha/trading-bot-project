@@ -220,9 +220,10 @@ function renderPairList() {
         container.appendChild(card);
     });
 
-    // Add "Show All" button if more than 10 pairs
+    // Add "Show All" / "Show Less" toggle if more than 10 pairs
     if (pairSignals.length > 10) {
         const showAllBtn = document.createElement('button');
+        let expanded = false;
         showAllBtn.textContent = `+${pairSignals.length - 10} more`;
         showAllBtn.style.cssText = `
       padding: 12px 16px;
@@ -236,8 +237,40 @@ function renderPairList() {
       transition: all 0.2s;
     `;
         showAllBtn.onclick = () => {
-            // Could expand to show all pairs
-            showToast('View all pairs feature coming soon', 'info');
+            expanded = !expanded;
+            // Remove all cards except the button itself
+            while (container.firstChild) container.removeChild(container.firstChild);
+
+            const pairsToRender = expanded ? pairSignals : pairSignals.slice(0, 10);
+
+            pairsToRender.forEach(p => {
+                const card = document.createElement('div');
+                card.style.cssText = `
+                  padding: 12px 16px;
+                  background: var(--gray-3);
+                  border: 1px solid var(--gray-2);
+                  border-radius: 6px;
+                  min-width: 120px;
+                  cursor: pointer;
+                  transition: all 0.2s;
+                `;
+                const baseCoin = p.pair.replace('B-', '').replace('_USDT', '');
+                const signalPct = Math.min(100, Math.max(0, p.signal_strength || 0));
+                card.innerHTML = `
+                  <div style="font-size: 13px; font-weight: 700; color: var(--accent); margin-bottom: 6px;">${baseCoin}</div>
+                  <div style="font-size: 11px; color: var(--gray-1); margin-bottom: 4px;">Signal: ${signalPct.toFixed(1)}%</div>
+                  <div style="height: 4px; background: var(--gray-2); border-radius: 2px; overflow: hidden;">
+                    <div style="height: 100%; width: ${signalPct}%; background: var(--accent); transition: width 0.3s;"></div>
+                  </div>
+                `;
+                card.onmouseenter = () => { card.style.borderColor = 'var(--accent)'; card.style.transform = 'translateY(-2px)'; };
+                card.onmouseleave = () => { card.style.borderColor = 'var(--gray-2)'; card.style.transform = 'translateY(0)'; };
+                container.appendChild(card);
+            });
+
+            // Re-add the toggle button
+            showAllBtn.textContent = expanded ? 'Show less' : `+${pairSignals.length - 10} more`;
+            container.appendChild(showAllBtn);
         };
         container.appendChild(showAllBtn);
     }
