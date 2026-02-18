@@ -31,10 +31,6 @@ async function toggleMode() {
       tradingMode = data.mode;
       renderMode();
       showToast(`Mode switched to ${data.mode}`, 'success');
-      // Auto-switch positions dropdown to match global mode
-      openTradesMode = tradingMode === 'REAL' ? 'real' : 'paper';
-      const modeSelect = document.getElementById('openTradesModeSelect');
-      if (modeSelect) modeSelect.value = openTradesMode;
       selectedOpenTrade = null;
       fetchOpenTrades();
     } else {
@@ -329,17 +325,19 @@ let selectedOpenTrade = null;
 
 async function fetchOpenTrades() {
   try {
-    // Always follow global trading mode: REAL -> real DB, PAPER -> paper DB
+    // Always follow global trading mode semantics:
+    // REAL -> live platform positions, PAPER -> paper trades in DB
     openTradesMode = tradingMode === 'PAPER' ? 'paper' : 'real';
 
-    const modeSelect = document.getElementById('openTradesModeSelect');
-    if (modeSelect) {
-      modeSelect.value = openTradesMode;
+    const badge = document.getElementById('openTradesModeBadge');
+    if (badge) {
+      badge.textContent = `Mode: ${tradingMode}`;
+      badge.style.color = tradingMode === 'REAL' ? 'var(--accent)' : 'var(--yellow)';
     }
 
     const endpoint = openTradesMode === 'paper'
       ? '/api/paper/trades/open'
-      : '/api/trades/open';
+      : '/api/live/positions';
 
     const resp = await fetch(API + endpoint);
     const data = await resp.json();
@@ -367,7 +365,7 @@ async function fetchOpenTrades() {
 }
 
 function switchTradeMode() {
-  // Keep UI consistent with global mode semantics
+  // Deprecated: mode is now strictly controlled by global trading mode
   selectedOpenTrade = null;
   fetchOpenTrades();
 }
