@@ -1088,12 +1088,13 @@ def pair_mode():
 
 @app.route("/api/pair_signals")
 def pair_signals():
-    """Get signal strength for all pairs to enable smart sorting."""
+    """Get signal strength for enabled pairs only (up to 10 max)."""
     try:
-        # Get all pair configs
-        all_pairs = db.get_all_pair_configs()
+        # Get ONLY enabled pair configs (user's favorites)
+        enabled_pairs = db.get_enabled_pairs()
         
-        if not all_pairs:
+        if not enabled_pairs:
+            app.logger.info("No enabled pairs found. Enable pairs in Pair Manager.")
             return jsonify([])
         
         # Import strategy to calculate signal strength
@@ -1117,13 +1118,19 @@ def pair_signals():
         except Exception:
             pass
         
-        for pair_config in all_pairs[:50]:  # Limit to 50 pairs max
+        # Process only enabled pairs (limit to 10 max for performance)
+        # This keeps response time under 20 seconds
+        pairs_to_process = enabled_pairs[:10]
+        app.logger.info(f"Processing {len(pairs_to_process)} enabled pairs for signal strength")
+        
+        for idx, pair_config in enumerate(pairs_to_process, 1):
             pair = pair_config.get("pair")
             if not pair:
                 continue
             
             try:
                 # Fetch candles for this pair
+                app.logger.debug(f"[{idx}/{len(pairs_to_process)}] Fetching candles for {pair}")
                 candles = client.get_candles(pair, interval, limit=150)
                 
                 if not candles or len(candles) < 50:
@@ -1149,6 +1156,7 @@ def pair_signals():
                     "inr_amount": pair_config.get("inr_amount", 300.0),
                     "last_price": candles[-1].get("close") if candles else None
                 })
+                app.logger.debug(f"[{idx}/{len(pairs_to_process)}] {pair}: signal={signal_strength:.1f}%")
             except Exception as e:
                 app.logger.warning(f"Signal strength calculation failed for {pair}: {e}")
                 results.append({
@@ -1162,6 +1170,8 @@ def pair_signals():
         
         # Sort by signal strength (highest first)
         results.sort(key=lambda x: x["signal_strength"], reverse=True)
+        
+        app.logger.info(f"Pair signals ready: {len(results)} pairs, top signal: {results[0]['signal_strength']:.1f}% ({results[0]['pair']})" if results else "No pairs processed")
         
         return jsonify(results)
     except Exception as e:

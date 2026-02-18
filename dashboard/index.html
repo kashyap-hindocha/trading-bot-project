@@ -227,8 +227,50 @@
       <!-- Favorites Panel (Right Side) -->
       <div class="pairs-section">
         <div class="chart-panel" style="flex: 1; overflow-y: auto;">
-          <div class="panel-title">⭐ Favorites</div>
+          <div class="panel-title">⭐ Quick View</div>
           <div id="favoritesPanel" style="display: flex; flex-direction: column; gap: 6px; font-size: 12px;"></div>
+        </div>
+      </div>
+    </div>
+
+
+    <!-- Pair Manager Section (NEW) -->
+    <div class="pair-manager-section" style="margin: 20px 0;">
+      <div class="panel-title">
+        ⚙️ Pair Manager
+        <div class="panel-tools" style="font-size: 11px; color: var(--gray-2);">
+          Select up to 10 pairs to trade with custom leverage & INR amounts
+        </div>
+      </div>
+      
+      <div class="chart-panel" style="padding: 20px;">
+        <!-- Search and Filter -->
+        <div style="display: flex; gap: 12px; margin-bottom: 16px; align-items: center;">
+          <input type="text" id="pairSearchInput" placeholder="Search pairs (e.g., BTC, ETH)..." 
+            oninput="filterPairs()"
+            style="flex: 1; padding: 8px 12px; background: var(--bg); color: var(--text); border: 1px solid var(--gray-2); border-radius: 4px; font-family: 'Space Mono'; font-size: 12px;">
+          
+          <button onclick="showOnlyEnabled()" id="showEnabledBtn"
+            style="padding: 8px 16px; background: var(--gray-3); color: var(--text); border: 1px solid var(--gray-2); border-radius: 4px; font-family: 'Space Mono'; font-size: 11px; cursor: pointer;">
+            Show Enabled Only
+          </button>
+          
+          <button onclick="refreshAvailablePairs()"
+            style="padding: 8px 16px; background: var(--accent); color: #000; border: 1px solid var(--accent); border-radius: 4px; font-family: 'Space Mono'; font-size: 11px; font-weight: 700; cursor: pointer;">
+            🔄 Refresh Pairs
+          </button>
+        </div>
+
+        <!-- Pair List with Config -->
+        <div id="pairManagerList" style="max-height: 400px; overflow-y: auto;">
+          <div style="color: var(--gray-2); text-align: center; padding: 20px;">
+            Loading available pairs...
+          </div>
+        </div>
+
+        <!-- Summary -->
+        <div id="pairManagerSummary" style="margin-top: 16px; padding: 12px; background: var(--gray-3); border-radius: 4px; font-size: 11px; color: var(--gray-1);">
+          <span id="enabledCount">0</span> pairs enabled (max 10)
         </div>
       </div>
     </div>
@@ -313,6 +355,7 @@
   <script src="js/data.js"></script>
   <script src="js/ui.js"></script>
   <script src="js/pair-mode.js"></script>
+  <script src="js/pair-manager.js"></script>
   <script src="js/init.js"></script>
 
 </body>

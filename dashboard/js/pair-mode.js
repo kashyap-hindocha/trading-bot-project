@@ -174,6 +174,11 @@ async function loadPairSignals() {
         // Render the horizontal pair cards
         renderPairList();
         
+        // Update favorites panel with latest signal data
+        if (typeof renderFavorites === 'function') {
+            renderFavorites();
+        }
+        
         console.debug(`Pair signals loaded in ${fetchTime}s, scheduling next call in 7s`);
     } catch (err) {
         console.error('Failed to load pair signals:', err);

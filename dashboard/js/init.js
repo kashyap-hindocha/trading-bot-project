@@ -16,6 +16,9 @@ document.addEventListener('DOMContentLoaded', async function () {
   await loadPairMode();
   await loadPairSignals(); // Load horizontal pair signals
 
+  // Load pair manager (available pairs and configs)
+  await loadAvailablePairs();
+
   // NOW populate pair selectors — pairSignals is ready
   populatePairSelectors();
 
