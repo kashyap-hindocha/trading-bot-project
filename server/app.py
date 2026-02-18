@@ -1254,9 +1254,13 @@ def pair_signals():
 
 @app.route("/api/live/positions")
 def live_positions():
-    """Get ALL open positions directly from CoinDCX (includes manual/Pippin trades)."""
+    """Get actual open positions from CoinDCX using List Positions endpoint."""
     try:
+        import hmac
+        import hashlib
+        import time
         from dotenv import load_dotenv
+        
         load_dotenv("/home/ubuntu/trading-bot/.env")
         key = os.getenv("COINDCX_API_KEY")
         secret = os.getenv("COINDCX_API_SECRET")
@@ -1264,66 +1268,70 @@ def live_positions():
         if not key or not secret:
             return jsonify({"error": "API credentials not configured"}), 500
 
-        client = CoinDCXREST(key, secret)
-
-        # Fetch live positions from CoinDCX
-        positions = client.get_positions()
-        if not positions:
+        # Use documented List Positions endpoint
+        timeStamp = int(round(time.time() * 1000))
+        body = {
+            "timestamp": timeStamp,
+            "page": "1",
+            "size": "100",
+            "margin_currency_short_name": ["USDT"]
+        }
+        
+        json_body = json.dumps(body, separators=(',', ':'))
+        secret_bytes = bytes(secret, encoding='utf-8')
+        signature = hmac.new(secret_bytes, json_body.encode(), hashlib.sha256).hexdigest()
+        
+        headers = {
+            'Content-Type': 'application/json',
+            'X-AUTH-APIKEY': key,
+            'X-AUTH-SIGNATURE': signature
+        }
+        
+        resp = requests.post(
+            "https://api.coindcx.com/exchange/v1/derivatives/futures/positions",
+            data=json_body,
+            headers=headers,
+            timeout=10
+        )
+        resp.raise_for_status()
+        positions = resp.json()
+        
+        if not isinstance(positions, list):
             return jsonify([])
 
-        # Fetch open orders to get TP/SL info per position
-        tp_sl_map = {}
-        try:
-            orders = client.get_open_orders()
-            if isinstance(orders, list):
-                for order in orders:
-                    pid = order.get("position_id") or order.get("positionId")
-                    if pid:
-                        otype = str(order.get("order_type", "")).lower()
-                        if "take_profit" in otype or "tp" in otype:
-                            tp_sl_map.setdefault(pid, {})["tp_price"] = order.get("price") or order.get("trigger_price")
-                        elif "stop_loss" in otype or "sl" in otype:
-                            tp_sl_map.setdefault(pid, {})["sl_price"] = order.get("price") or order.get("trigger_price")
-        except Exception as e:
-            app.logger.warning(f"Could not fetch TP/SL orders: {e}")
-
-        # Normalize positions to match frontend format
+        # Filter for actual open positions (active_pos != 0)
         result = []
         for pos in positions:
-            # Log raw position to help identify field names
-            app.logger.info(f"Raw CoinDCX position: {pos}")
-
-            # CoinDCX field names vary — handle both snake_case and camelCase
-            pair = pos.get("pair") or pos.get("symbol", "")
-            side = pos.get("side", "").lower()
-            if side in ("long", "1", 1):
-                side = "buy"
-            elif side in ("short", "-1", -1):
-                side = "sell"
-
-            entry_price = pos.get("entry_price") or pos.get("entryPrice") or pos.get("avg_entry_price") or 0
-            # Try all possible quantity field names CoinDCX might use
-            quantity = (pos.get("quantity") or pos.get("size") or pos.get("amount") or
-                       pos.get("net_quantity") or pos.get("netQuantity") or pos.get("open_quantity") or 0)
-            leverage = pos.get("leverage") or pos.get("lev") or 1
-            unrealized_pnl = pos.get("unrealized_pnl") or pos.get("unrealizedPnl") or pos.get("pnl") or 0
-            margin = pos.get("margin") or pos.get("initial_margin") or 0
-            position_id = str(pos.get("id") or pos.get("position_id") or pos.get("positionId") or "")
-
-            tp_sl = tp_sl_map.get(position_id, {})
-
+            active_pos = pos.get("active_pos", 0)
+            if active_pos == 0:
+                continue  # Skip position configs with no active position
+            
+            # Determine side from active_pos sign
+            quantity = abs(float(active_pos))
+            side = "buy" if active_pos > 0 else "sell"
+            
+            pair = pos.get("pair", "")
+            position_id = pos.get("id", "")
+            entry_price = float(pos.get("avg_price", 0))
+            leverage = int(pos.get("leverage", 1))
+            locked_margin = float(pos.get("locked_margin", 0))
+            
+            # Get TP/SL from triggers
+            tp_price = pos.get("take_profit_trigger")
+            sl_price = pos.get("stop_loss_trigger")
+            
             result.append({
                 "position_id": position_id,
                 "pair": pair,
                 "side": side,
-                "entry_price": float(entry_price) if entry_price else 0,
-                "quantity": float(quantity) if quantity else 0,
-                "leverage": int(leverage) if leverage else 1,
-                "tp_price": float(tp_sl.get("tp_price", 0)) if tp_sl.get("tp_price") else None,
-                "sl_price": float(tp_sl.get("sl_price", 0)) if tp_sl.get("sl_price") else None,
-                "unrealized_pnl": float(unrealized_pnl) if unrealized_pnl else 0,
-                "margin": float(margin) if margin else 0,
-                "opened_at": pos.get("created_at") or pos.get("createdAt"),
+                "entry_price": entry_price,
+                "quantity": quantity,
+                "leverage": leverage,
+                "tp_price": float(tp_price) if tp_price else None,
+                "sl_price": float(sl_price) if sl_price else None,
+                "unrealized_pnl": 0,  # Calculate from mark_price if needed
+                "margin": locked_margin,
+                "opened_at": pos.get("updated_at"),
                 "status": "open",
                 "source": "live"
             })
