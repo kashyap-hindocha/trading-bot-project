@@ -1205,9 +1205,11 @@ def live_positions():
             app.logger.warning(f"Could not fetch TP/SL orders: {e}")
 
         # Normalize positions to match frontend format
-        # Only include positions with actual quantity (truly open)
         result = []
         for pos in positions:
+            # Log raw position to help identify field names
+            app.logger.info(f"Raw CoinDCX position: {pos}")
+
             # CoinDCX field names vary — handle both snake_case and camelCase
             pair = pos.get("pair") or pos.get("symbol", "")
             side = pos.get("side", "").lower()
@@ -1217,18 +1219,13 @@ def live_positions():
                 side = "sell"
 
             entry_price = pos.get("entry_price") or pos.get("entryPrice") or pos.get("avg_entry_price") or 0
-            quantity = pos.get("quantity") or pos.get("size") or pos.get("amount") or 0
+            # Try all possible quantity field names CoinDCX might use
+            quantity = (pos.get("quantity") or pos.get("size") or pos.get("amount") or
+                       pos.get("net_quantity") or pos.get("netQuantity") or pos.get("open_quantity") or 0)
             leverage = pos.get("leverage") or pos.get("lev") or 1
             unrealized_pnl = pos.get("unrealized_pnl") or pos.get("unrealizedPnl") or pos.get("pnl") or 0
             margin = pos.get("margin") or pos.get("initial_margin") or 0
             position_id = str(pos.get("id") or pos.get("position_id") or pos.get("positionId") or "")
-
-            # Skip positions with zero quantity (already closed)
-            try:
-                if float(quantity) == 0:
-                    continue
-            except (TypeError, ValueError):
-                continue
 
             tp_sl = tp_sl_map.get(position_id, {})
 
@@ -1245,7 +1242,7 @@ def live_positions():
                 "margin": float(margin) if margin else 0,
                 "opened_at": pos.get("created_at") or pos.get("createdAt"),
                 "status": "open",
-                "source": "live"  # Indicates this came from CoinDCX live API
+                "source": "live"
             })
 
         return jsonify(result)
@@ -1253,6 +1250,25 @@ def live_positions():
     except Exception as e:
         app.logger.error(f"Error fetching live positions: {e}")
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/debug/positions")
+def debug_positions():
+    """Debug endpoint - returns raw CoinDCX positions response to identify field names."""
+    try:
+        from dotenv import load_dotenv
+        load_dotenv("/home/ubuntu/trading-bot/.env")
+        key = os.getenv("COINDCX_API_KEY")
+        secret = os.getenv("COINDCX_API_SECRET")
+        if not key or not secret:
+            return jsonify({"error": "No credentials"}), 500
+        client = CoinDCXREST(key, secret)
+        positions = client.get_positions()
+        return jsonify({"count": len(positions), "raw": positions})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 
 
 if __name__ == "__main__":

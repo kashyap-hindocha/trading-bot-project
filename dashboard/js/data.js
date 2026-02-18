@@ -31,7 +31,10 @@ async function toggleMode() {
       tradingMode = data.mode;
       renderMode();
       showToast(`Mode switched to ${data.mode}`, 'success');
-      // Refresh open positions to use correct data source (live vs DB)
+      // Auto-switch positions dropdown to match global mode
+      openTradesMode = tradingMode === 'REAL' ? 'real' : 'paper';
+      const modeSelect = document.getElementById('openTradesModeSelect');
+      if (modeSelect) modeSelect.value = openTradesMode;
       selectedOpenTrade = null;
       fetchOpenTrades();
     } else {

@@ -49,35 +49,27 @@ function initCandleChart() {
   candleChart.timeScale().fitContent();
 }
 
-// Populate pair dropdowns
+// Populate pair dropdowns — use pairSignals (bot's configured pairs with real data)
 function populatePairSelectors() {
-  if (!allPairs || allPairs.length === 0) return;
+  // Use pairSignals if available, fall back to allPairs
+  const pairs = (pairSignals && pairSignals.length > 0) ? pairSignals : allPairs;
+  if (!pairs || pairs.length === 0) return;
 
   const candleSelect = document.getElementById('candlePairSelect');
-  const priceSelect = document.getElementById('priceChartPairSelect');
 
   if (candleSelect && candleSelect.children.length <= 1) {
-    allPairs.forEach(p => {
+    pairs.forEach(p => {
       const opt = document.createElement('option');
       opt.value = p.pair;
       opt.textContent = p.pair.replace('B-', '').replace('_USDT', '');
       candleSelect.appendChild(opt);
     });
-    // Auto-select first pair
-    if (allPairs.length > 0 && !selectedCandlePair) {
-      candleSelect.value = allPairs[0].pair;
-      selectedCandlePair = allPairs[0].pair;
-      updateCandleChart(); // Load data immediately
+    // Auto-select first pair and load data
+    if (pairs.length > 0 && !selectedCandlePair) {
+      candleSelect.value = pairs[0].pair;
+      selectedCandlePair = pairs[0].pair;
+      updateCandleChart();
     }
-  }
-
-  if (priceSelect && priceSelect.children.length <= 1) {
-    allPairs.forEach(p => {
-      const opt = document.createElement('option');
-      opt.value = p.pair;
-      opt.textContent = p.pair.replace('B-', '').replace('_USDT', '');
-      priceSelect.appendChild(opt);
-    });
   }
 }
 
