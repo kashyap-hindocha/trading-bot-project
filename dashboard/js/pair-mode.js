@@ -220,12 +220,12 @@ function renderPairList() {
         container.appendChild(card);
     });
 
-    // Add "Show All" / "Show Less" toggle if more than 10 pairs
-    if (pairSignals.length > 10) {
-        const showAllBtn = document.createElement('button');
-        let expanded = false;
-        showAllBtn.textContent = `+${pairSignals.length - 10} more`;
-        showAllBtn.style.cssText = `
+    // Add "Show All" / "Show Less" toggle
+    const showAllBtn = document.createElement('button');
+    let expanded = false;
+    const extraCount = pairSignals.length > 10 ? pairSignals.length - 10 : 0;
+    showAllBtn.textContent = extraCount > 0 ? `+${extraCount} more` : 'Show all pairs';
+    showAllBtn.style.cssText = `
       padding: 12px 16px;
       background: var(--gray-3);
       color: var(--accent);
@@ -236,14 +236,33 @@ function renderPairList() {
       cursor: pointer;
       transition: all 0.2s;
     `;
-        showAllBtn.onclick = () => {
-            expanded = !expanded;
-            // Remove all cards except the button itself
+
+    showAllBtn.onclick = async () => {
+        expanded = !expanded;
+
+        if (!expanded) {
+            // Collapse back to top 10
+            while (container.firstChild) container.removeChild(container.firstChild);
+            renderPairList();
+            return;
+        }
+
+        // Fetch ALL available pairs from CoinDCX API
+        showAllBtn.textContent = 'Loading...';
+        showAllBtn.disabled = true;
+
+        try {
+            const res = await fetch(`${API}/api/pairs/available`);
+            const allAvailable = await res.json();
+
+            // Build a signal map from pairSignals for quick lookup
+            const signalMap = {};
+            pairSignals.forEach(p => { signalMap[p.pair] = p.signal_strength || 0; });
+
+            // Clear container and render all pairs
             while (container.firstChild) container.removeChild(container.firstChild);
 
-            const pairsToRender = expanded ? pairSignals : pairSignals.slice(0, 10);
-
-            pairsToRender.forEach(p => {
+            allAvailable.forEach(p => {
                 const card = document.createElement('div');
                 card.style.cssText = `
                   padding: 12px 16px;
@@ -254,8 +273,8 @@ function renderPairList() {
                   cursor: pointer;
                   transition: all 0.2s;
                 `;
-                const baseCoin = p.pair.replace('B-', '').replace('_USDT', '');
-                const signalPct = Math.min(100, Math.max(0, p.signal_strength || 0));
+                const baseCoin = (p.base || p.pair.replace('B-', '').replace('_USDT', ''));
+                const signalPct = Math.min(100, Math.max(0, signalMap[p.pair] || 0));
                 card.innerHTML = `
                   <div style="font-size: 13px; font-weight: 700; color: var(--accent); margin-bottom: 6px;">${baseCoin}</div>
                   <div style="font-size: 11px; color: var(--gray-1); margin-bottom: 4px;">Signal: ${signalPct.toFixed(1)}%</div>
@@ -268,10 +287,17 @@ function renderPairList() {
                 container.appendChild(card);
             });
 
-            // Re-add the toggle button
-            showAllBtn.textContent = expanded ? 'Show less' : `+${pairSignals.length - 10} more`;
+            showAllBtn.textContent = 'Show less';
+            showAllBtn.disabled = false;
             container.appendChild(showAllBtn);
-        };
-        container.appendChild(showAllBtn);
-    }
+
+        } catch (err) {
+            console.error('Failed to load all pairs:', err);
+            showAllBtn.textContent = 'Error - try again';
+            showAllBtn.disabled = false;
+        }
+    };
+
+    container.appendChild(showAllBtn);
 }
+
