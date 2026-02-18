@@ -309,6 +309,62 @@ async function refreshAvailablePairs() {
     showToast('Pairs refreshed', 'success');
 }
 
+// Disable all pairs at once
+async function disableAllPairs() {
+    try {
+        // Confirm before disabling
+        const enabledCount = pairConfigsDB.filter(c => c.enabled === 1).length;
+        
+        if (enabledCount === 0) {
+            showToast('No enabled pairs to disable', 'info');
+            return;
+        }
+        
+        if (!confirm(`Disable all ${enabledCount} enabled pairs?`)) {
+            return;
+        }
+        
+        const btn = event.target;
+        btn.disabled = true;
+        btn.textContent = 'Disabling...';
+        
+        const res = await fetch(`${API}/api/pairs/config/disable_all`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        
+        if (!res.ok) {
+            showToast('Failed to disable pairs', 'error');
+            btn.disabled = false;
+            btn.textContent = 'Disable All';
+            return;
+        }
+        
+        const data = await res.json();
+        showToast(data.message, 'success');
+        
+        // Reload configs and re-render
+        await loadPairConfigs();
+        renderPairManager();
+        
+        // Update favorites panel
+        if (typeof renderFavorites === 'function') {
+            renderFavorites();
+        }
+        
+        btn.disabled = false;
+        btn.textContent = 'Disable All';
+        
+    } catch (err) {
+        console.error('Failed to disable all pairs:', err);
+        showToast('Failed to disable pairs', 'error');
+        if (event && event.target) {
+            event.target.disabled = false;
+            event.target.textContent = 'Disable All';
+        }
+    }
+}
+
 // Update summary
 function updatePairManagerSummary() {
     const enabledCount = pairConfigsDB.filter(c => c.enabled === 1).length;

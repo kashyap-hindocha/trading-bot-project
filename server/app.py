@@ -918,6 +918,31 @@ def pairs_config_bulk():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/pairs/config/disable_all", methods=["POST"])
+def pairs_config_disable_all():
+    """Disable all pairs at once."""
+    try:
+        all_configs = db.get_all_pair_configs()
+        count = 0
+        
+        for cfg in all_configs:
+            if cfg.get("enabled") == 1:
+                db.upsert_pair_config(
+                    cfg["pair"], 
+                    0,  # disabled
+                    cfg.get("leverage", 5),
+                    cfg.get("quantity", 0.001),
+                    cfg.get("inr_amount", 300.0)
+                )
+                count += 1
+        
+        db.log_event("INFO", f"Disabled all {count} enabled pairs")
+        return jsonify({"success": True, "message": f"Disabled {count} pairs"})
+    except Exception as e:
+        app.logger.error(f"Error disabling all pairs: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/pairs/active")
 def pairs_active():
     """Get currently active trading pairs with open positions."""
