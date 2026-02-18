@@ -16,7 +16,7 @@ function initCandleChart() {
   candleChart = LightweightCharts.createChart(container, {
     layout: {
       textColor: '#4a6070',
-      backgroundColor: '#0f1419',
+      background: { type: 'solid', color: '#0f1419' },
       fontSize: 12,
       fontFamily: 'Space Mono'
     },
@@ -27,8 +27,8 @@ function initCandleChart() {
       barSpacing: 8,
     },
     grid: {
-      hStyle: { color: 'rgba(30,42,53,0.4)' },
-      vStyle: { color: 'rgba(30,42,53,0.4)' }
+      horzLines: { color: 'rgba(30,42,53,0.4)' },
+      vertLines: { color: 'rgba(30,42,53,0.4)' }
     },
     rightPriceScale: {
       textColor: '#4a6070',
@@ -132,7 +132,6 @@ async function updateCandleChart() {
     if (candleData.length > 0) {
       candleSeries.setData(candleData);
       candleChart.timeScale().fitContent();
-      candleChart.priceScale().applyOptions({ autoScale: true });
 
       // Update info with current price and confidence
       const last = candleData[candleData.length - 1];
