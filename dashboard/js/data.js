@@ -31,6 +31,9 @@ async function toggleMode() {
       tradingMode = data.mode;
       renderMode();
       showToast(`Mode switched to ${data.mode}`, 'success');
+      // Refresh open positions to use correct data source (live vs DB)
+      selectedOpenTrade = null;
+      fetchOpenTrades();
     } else {
       showToast(data.error || 'Failed to switch mode', 'error');
     }
@@ -323,10 +326,22 @@ let selectedOpenTrade = null;
 
 async function fetchOpenTrades() {
   try {
-    const endpoint = openTradesMode === 'real' ? '/api/trades/open' : '/api/paper/trades/open';
+    let endpoint;
+    if (openTradesMode === 'paper') {
+      // Paper mode always uses DB
+      endpoint = '/api/paper/trades/open';
+    } else if (tradingMode === 'REAL') {
+      // Real mode: fetch live positions directly from CoinDCX
+      // This includes bot trades, Pippin trades, and manual trades
+      endpoint = '/api/live/positions';
+    } else {
+      // PAPER global mode but 'real' dropdown selected — use DB fallback
+      endpoint = '/api/trades/open';
+    }
+
     const resp = await fetch(API + endpoint);
     const data = await resp.json();
-    openTrades = data || [];
+    openTrades = Array.isArray(data) ? data : [];
 
     renderOpenTradesTabs();
 
@@ -406,14 +421,28 @@ function renderOpenTradeDetail(trade) {
     return;
   }
 
+  const isLive = trade.source === 'live';
   const posType = trade.side === 'buy' ? 'LONG' : 'SHORT';
-  const pnlColor = trade.pnl > 0 ? 'positive' : trade.pnl < 0 ? 'negative' : '';
-  const pnlText = trade.pnl !== undefined ? (trade.pnl > 0 ? '+' : '') + parseFloat(trade.pnl).toFixed(4) : '—';
+
+  // P&L — use unrealized_pnl for live, pnl for DB
+  const pnlRaw = isLive ? trade.unrealized_pnl : trade.pnl;
+  const pnlNum = parseFloat(pnlRaw);
+  const pnlColor = pnlNum > 0 ? 'var(--green)' : pnlNum < 0 ? 'var(--red)' : 'var(--gray-1)';
+  const pnlText = Number.isFinite(pnlNum) ? (pnlNum > 0 ? '+' : '') + pnlNum.toFixed(4) : '—';
+
+  // TP/SL — may be null for manual trades
+  const tpText = trade.tp_price ? parseFloat(trade.tp_price).toFixed(4) : '—';
+  const slText = trade.sl_price ? parseFloat(trade.sl_price).toFixed(4) : '—';
+
+  // Source badge
+  const sourceBadge = isLive
+    ? `<span style="background: var(--accent); color: #000; font-size: 9px; padding: 2px 6px; border-radius: 3px; font-weight: 700; margin-left: 8px;">LIVE</span>`
+    : `<span style="background: var(--gray-2); color: var(--gray-1); font-size: 9px; padding: 2px 6px; border-radius: 3px; font-weight: 700; margin-left: 8px;">DB</span>`;
 
   container.innerHTML = `
     <div class="trade-details-grid">
       <div class="trade-detail-item">
-        <div class="trade-detail-label">Pair</div>
+        <div class="trade-detail-label">Pair ${sourceBadge}</div>
         <div class="trade-detail-value">${trade.pair}</div>
       </div>
       <div class="trade-detail-item">
@@ -422,31 +451,40 @@ function renderOpenTradeDetail(trade) {
       </div>
       <div class="trade-detail-item">
         <div class="trade-detail-label">Entry Price</div>
-        <div class="trade-detail-value">${parseFloat(trade.entry_price).toFixed(2)}</div>
+        <div class="trade-detail-value">${trade.entry_price ? parseFloat(trade.entry_price).toFixed(4) : '—'}</div>
       </div>
       <div class="trade-detail-item">
         <div class="trade-detail-label">Quantity</div>
-        <div class="trade-detail-value">${parseFloat(trade.quantity).toFixed(4)}</div>
+        <div class="trade-detail-value">${trade.quantity ? parseFloat(trade.quantity).toFixed(4) : '—'}</div>
       </div>
       <div class="trade-detail-item">
         <div class="trade-detail-label">Leverage</div>
-        <div class="trade-detail-value">${trade.leverage}x</div>
+        <div class="trade-detail-value">${trade.leverage ? trade.leverage + 'x' : '—'}</div>
       </div>
       <div class="trade-detail-item">
+        <div class="trade-detail-label">Unrealized P&L</div>
+        <div class="trade-detail-value" style="color: ${pnlColor}; font-weight: 700;">${pnlText}</div>
+      </div>
+      ${isLive && trade.margin ? `
+      <div class="trade-detail-item">
+        <div class="trade-detail-label">Margin Used</div>
+        <div class="trade-detail-value">${parseFloat(trade.margin).toFixed(4)}</div>
+      </div>` : ''}
+      <div class="trade-detail-item">
         <div class="trade-detail-label">TP Price</div>
-        <div class="trade-detail-value" style="color: var(--green);">${parseFloat(trade.tp_price).toFixed(2)}</div>
+        <div class="trade-detail-value" style="color: ${tpText !== '—' ? 'var(--green)' : 'var(--gray-2)'}">${tpText}</div>
       </div>
       <div class="trade-detail-item">
         <div class="trade-detail-label">SL Price</div>
-        <div class="trade-detail-value" style="color: var(--red);">${parseFloat(trade.sl_price).toFixed(2)}</div>
+        <div class="trade-detail-value" style="color: ${slText !== '—' ? 'var(--red)' : 'var(--gray-2)'}">${slText}</div>
       </div>
       <div class="trade-detail-item">
         <div class="trade-detail-label">Position ID</div>
-        <div class="trade-detail-value" style="font-size: 11px; word-break: break-all;">${trade.position_id}</div>
+        <div class="trade-detail-value" style="font-size: 11px; word-break: break-all;">${trade.position_id || '—'}</div>
       </div>
       <div class="trade-detail-item">
         <div class="trade-detail-label">Opened At</div>
-        <div class="trade-detail-value">${trade.opened_at ? trade.opened_at.slice(0, 16).replace('T', ' ') : '—'}</div>
+        <div class="trade-detail-value">${trade.opened_at ? String(trade.opened_at).slice(0, 16).replace('T', ' ') : '—'}</div>
       </div>
       <div class="trade-detail-item">
         <div class="trade-detail-label">Status</div>

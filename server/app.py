@@ -1189,5 +1189,83 @@ def pair_signals():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/live/positions")
+def live_positions():
+    """Get ALL open positions directly from CoinDCX (includes manual/Pippin trades)."""
+    try:
+        from dotenv import load_dotenv
+        load_dotenv("/home/ubuntu/trading-bot/.env")
+        key = os.getenv("COINDCX_API_KEY")
+        secret = os.getenv("COINDCX_API_SECRET")
+
+        if not key or not secret:
+            return jsonify({"error": "API credentials not configured"}), 500
+
+        client = CoinDCXREST(key, secret)
+
+        # Fetch live positions from CoinDCX
+        positions = client.get_positions()
+        if not positions:
+            return jsonify([])
+
+        # Fetch open orders to get TP/SL info per position
+        tp_sl_map = {}
+        try:
+            orders = client.get_open_orders()
+            if isinstance(orders, list):
+                for order in orders:
+                    pid = order.get("position_id") or order.get("positionId")
+                    if pid:
+                        otype = str(order.get("order_type", "")).lower()
+                        if "take_profit" in otype or "tp" in otype:
+                            tp_sl_map.setdefault(pid, {})["tp_price"] = order.get("price") or order.get("trigger_price")
+                        elif "stop_loss" in otype or "sl" in otype:
+                            tp_sl_map.setdefault(pid, {})["sl_price"] = order.get("price") or order.get("trigger_price")
+        except Exception as e:
+            app.logger.warning(f"Could not fetch TP/SL orders: {e}")
+
+        # Normalize positions to match frontend format
+        result = []
+        for pos in positions:
+            # CoinDCX field names vary — handle both snake_case and camelCase
+            pair = pos.get("pair") or pos.get("symbol", "")
+            side = pos.get("side", "").lower()
+            if side in ("long", "1", 1):
+                side = "buy"
+            elif side in ("short", "-1", -1):
+                side = "sell"
+
+            entry_price = pos.get("entry_price") or pos.get("entryPrice") or pos.get("avg_entry_price") or 0
+            quantity = pos.get("quantity") or pos.get("size") or pos.get("amount") or 0
+            leverage = pos.get("leverage") or pos.get("lev") or 1
+            unrealized_pnl = pos.get("unrealized_pnl") or pos.get("unrealizedPnl") or pos.get("pnl") or 0
+            margin = pos.get("margin") or pos.get("initial_margin") or 0
+            position_id = str(pos.get("id") or pos.get("position_id") or pos.get("positionId") or "")
+
+            tp_sl = tp_sl_map.get(position_id, {})
+
+            result.append({
+                "position_id": position_id,
+                "pair": pair,
+                "side": side,
+                "entry_price": float(entry_price) if entry_price else 0,
+                "quantity": float(quantity) if quantity else 0,
+                "leverage": int(leverage) if leverage else 1,
+                "tp_price": float(tp_sl.get("tp_price", 0)) if tp_sl.get("tp_price") else None,
+                "sl_price": float(tp_sl.get("sl_price", 0)) if tp_sl.get("sl_price") else None,
+                "unrealized_pnl": float(unrealized_pnl) if unrealized_pnl else 0,
+                "margin": float(margin) if margin else 0,
+                "opened_at": pos.get("created_at") or pos.get("createdAt"),
+                "status": "open",
+                "source": "live"  # Indicates this came from CoinDCX live API
+            })
+
+        return jsonify(result)
+
+    except Exception as e:
+        app.logger.error(f"Error fetching live positions: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False)
