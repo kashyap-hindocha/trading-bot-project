@@ -10,7 +10,7 @@ let currentPrices = {};  // Store current prices for dynamic quantity calculatio
 
 // Calculate quantity based on INR amount, leverage, and current price
 function calculateQuantity(inrAmount, leverage, currentPrice) {
-    if (!currentPrice || currentPrice <= 0) return 0.001;
+    if (!currentPrice || currentPrice <= 0) return null;
     
     // Formula: quantity = (inr_amount * leverage) / current_price
     // This gives the position size in base currency
@@ -20,13 +20,38 @@ function calculateQuantity(inrAmount, leverage, currentPrice) {
     return parseFloat(quantity.toFixed(6));
 }
 
+function getLivePrice(pair) {
+    const directPrice = Number(currentPrices[pair] || 0);
+    if (directPrice > 0) return directPrice;
+
+    if (typeof pairSignals !== 'undefined' && Array.isArray(pairSignals) && pairSignals.length > 0) {
+        const signalPair = pairSignals.find(p => p && p.pair === pair);
+        const signalPrice = Number(signalPair?.last_price || 0);
+        if (signalPrice > 0) return signalPrice;
+    }
+
+    return 0;
+}
+
 // Load current prices for all pairs
 async function loadCurrentPrices() {
     try {
         const res = await fetch(`${API}/api/pairs/prices`);
         if (!res.ok) return;
         
-        currentPrices = await res.json();
+        const apiPrices = await res.json();
+        currentPrices = { ...currentPrices, ...apiPrices };
+
+        if (typeof pairSignals !== 'undefined' && Array.isArray(pairSignals)) {
+            pairSignals.forEach(item => {
+                const pair = item?.pair;
+                const lastPrice = Number(item?.last_price || 0);
+                if (pair && lastPrice > 0) {
+                    currentPrices[pair] = lastPrice;
+                }
+            });
+        }
+
         console.log(`Loaded prices for ${Object.keys(currentPrices).length} pairs`);
     } catch (err) {
         console.error('Failed to load current prices:', err);
@@ -135,9 +160,13 @@ function renderPairManager() {
         const canEnable = enabledCount < 10 || isEnabled;
         
         // Get current price and calculate quantity
-        const currentPrice = currentPrices[pair.pair] || 0;
+        const currentPrice = getLivePrice(pair.pair);
         const calculatedQty = calculateQuantity(cfg.inr_amount, cfg.leverage, currentPrice);
-        const priceDisplay = currentPrice > 0 ? `₹${currentPrice.toLocaleString()}` : 'Loading...';
+        const quantityDisplay = calculatedQty !== null ? calculatedQty : '—';
+        const qtyTitle = calculatedQty !== null
+            ? `Calculated: (${cfg.inr_amount} × ${cfg.leverage}) ÷ ${currentPrice.toFixed(2)} = ${calculatedQty}`
+            : 'Waiting for live price to calculate quantity';
+        const priceDisplay = currentPrice > 0 ? `₹${currentPrice.toLocaleString()}` : 'Syncing...';
         
         return `
             <div class="pair-manager-row" data-pair="${pair.pair}" 
@@ -194,9 +223,9 @@ function renderPairManager() {
                     <label style="font-size: 9px; color: var(--gray-1); display: block; margin-bottom: 4px;">QUANTITY (Auto)</label>
                     <input type="text" 
                            id="qty-${pair.pair}"
-                           value="${calculatedQty}" 
+                              value="${quantityDisplay}" 
                            readonly
-                           title="Calculated: (${cfg.inr_amount} × ${cfg.leverage}) ÷ ${currentPrice.toFixed(2)} = ${calculatedQty}"
+                              title="${qtyTitle}"
                            style="width: 100%; padding: 6px 8px; background: var(--gray-3); color: ${currentPrice > 0 ? 'var(--accent)' : 'var(--gray-1)'}; border: 1px solid var(--gray-2); border-radius: 4px; font-family: 'Space Mono'; font-size: 11px; cursor: help;">
                 </div>
                 
@@ -231,8 +260,8 @@ async function togglePairEnabled(pair, enabled) {
         const inr_amount = existing.inr_amount || 300.0;
         
         // Calculate quantity based on current price
-        const currentPrice = currentPrices[pair] || 0;
-        const quantity = calculateQuantity(inr_amount, leverage, currentPrice);
+        const currentPrice = getLivePrice(pair);
+        const quantity = calculateQuantity(inr_amount, leverage, currentPrice) ?? Number(existing.quantity || 0.001);
         
         const res = await fetch(`${API}/api/pairs/config/update`, {
             method: 'POST',
@@ -289,12 +318,12 @@ async function updatePairConfig(pair, field, value) {
         }
         
         // Calculate new quantity
-        const currentPrice = currentPrices[pair] || 0;
+        const currentPrice = getLivePrice(pair);
         updatedConfig.quantity = calculateQuantity(
             updatedConfig.inr_amount, 
             updatedConfig.leverage, 
             currentPrice
-        );
+        ) ?? Number(existing.quantity || 0.001);
         
         const res = await fetch(`${API}/api/pairs/config/update`, {
             method: 'POST',
@@ -346,10 +375,16 @@ function updatePairConfigLive(pair, field, value) {
     const inrAmount = field === 'inr_amount' ? parseFloat(value) : parseFloat(inrInput.value);
     
     // Get current price
-    const currentPrice = currentPrices[pair] || 0;
+    const currentPrice = getLivePrice(pair);
     
     // Calculate and update quantity display
     const newQty = calculateQuantity(inrAmount, leverage, currentPrice);
+    if (newQty === null) {
+        qtyInput.value = '—';
+        qtyInput.title = 'Waiting for live price to calculate quantity';
+        return;
+    }
+
     qtyInput.value = newQty;
     qtyInput.title = `Calculated: (${inrAmount} × ${leverage}) ÷ ${currentPrice.toFixed(2)} = ${newQty}`;
 }

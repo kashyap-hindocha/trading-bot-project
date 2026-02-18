@@ -329,18 +329,17 @@ let selectedOpenTrade = null;
 
 async function fetchOpenTrades() {
   try {
-    let endpoint;
-    if (openTradesMode === 'paper') {
-      // Paper mode always uses DB
-      endpoint = '/api/paper/trades/open';
-    } else if (tradingMode === 'REAL') {
-      // Real mode: fetch live positions directly from CoinDCX
-      // This includes bot trades, Pippin trades, and manual trades
-      endpoint = '/api/live/positions';
-    } else {
-      // PAPER global mode but 'real' dropdown selected — use DB fallback
-      endpoint = '/api/trades/open';
+    // Always follow global trading mode: REAL -> real DB, PAPER -> paper DB
+    openTradesMode = tradingMode === 'PAPER' ? 'paper' : 'real';
+
+    const modeSelect = document.getElementById('openTradesModeSelect');
+    if (modeSelect) {
+      modeSelect.value = openTradesMode;
     }
+
+    const endpoint = openTradesMode === 'paper'
+      ? '/api/paper/trades/open'
+      : '/api/trades/open';
 
     const resp = await fetch(API + endpoint);
     const data = await resp.json();
@@ -368,12 +367,9 @@ async function fetchOpenTrades() {
 }
 
 function switchTradeMode() {
-  const select = document.getElementById('openTradesModeSelect');
-  if (select) {
-    openTradesMode = select.value;
-    selectedOpenTrade = null;
-    fetchOpenTrades();
-  }
+  // Keep UI consistent with global mode semantics
+  selectedOpenTrade = null;
+  fetchOpenTrades();
 }
 
 function switchOpenTrade(trade) {

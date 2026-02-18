@@ -178,6 +178,10 @@ async function loadPairSignals() {
         if (typeof renderFavorites === 'function') {
             renderFavorites();
         }
+
+        if (typeof renderPairManager === 'function') {
+            renderPairManager();
+        }
         
         console.debug(`Pair signals loaded in ${fetchTime}s, scheduling next call in 7s`);
     } catch (err) {
