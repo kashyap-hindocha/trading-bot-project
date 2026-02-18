@@ -59,7 +59,7 @@ async function changeStrategy() {
     if (response.ok) {
       console.log(`Strategy changed to: ${strategyName}`);
       // Optionally reload data to reflect new strategy
-      loadData();
+      fetchAll();
     } else {
       console.error('Failed to change strategy');
       // Reset to previous value
