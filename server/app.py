@@ -1302,39 +1302,74 @@ def live_positions():
         # Filter for actual open positions (active_pos != 0)
         result = []
         for pos in positions:
-            active_pos = pos.get("active_pos", 0)
-            if active_pos == 0:
-                continue  # Skip position configs with no active position
-            
-            # Determine side from active_pos sign
-            quantity = abs(float(active_pos))
-            side = "buy" if active_pos > 0 else "sell"
-            
-            pair = pos.get("pair", "")
-            position_id = pos.get("id", "")
-            entry_price = float(pos.get("avg_price", 0))
-            leverage = int(pos.get("leverage", 1))
-            locked_margin = float(pos.get("locked_margin", 0))
-            
-            # Get TP/SL from triggers
-            tp_price = pos.get("take_profit_trigger")
-            sl_price = pos.get("stop_loss_trigger")
-            
-            result.append({
-                "position_id": position_id,
-                "pair": pair,
-                "side": side,
-                "entry_price": entry_price,
-                "quantity": quantity,
-                "leverage": leverage,
-                "tp_price": float(tp_price) if tp_price else None,
-                "sl_price": float(sl_price) if sl_price else None,
-                "unrealized_pnl": 0,  # Calculate from mark_price if needed
-                "margin": locked_margin,
-                "opened_at": pos.get("updated_at"),
-                "status": "open",
-                "source": "live"
-            })
+            try:
+                active_pos = pos.get("active_pos", 0)
+                if not active_pos:
+                    # Skip configs / inactive rows
+                    continue
+
+                # Determine side from active_pos sign
+                qty = float(active_pos)
+                quantity = abs(qty)
+                side = "buy" if qty > 0 else "sell"
+                
+                pair = pos.get("pair", "")
+                position_id = pos.get("id", "")
+                entry_price = float(pos.get("avg_price", 0) or 0)
+                leverage = int(pos.get("leverage", 1) or 1)
+                locked_margin = float(pos.get("locked_margin", 0) or 0)
+
+                # Mark / index price for live P&L (fallback to any reasonable field)
+                mark_price = None
+                for key_name in ("mark_price", "index_price", "last_price", "current_price", "price"):
+                    raw = pos.get(key_name)
+                    if raw is not None:
+                        try:
+                            mark_price = float(raw)
+                            break
+                        except (TypeError, ValueError):
+                            continue
+
+                # Compute unrealized P&L in quote currency if we have a mark price
+                unrealized_pnl = None
+                if mark_price is not None and entry_price and quantity:
+                    if side == "buy":
+                        unrealized_pnl = (mark_price - entry_price) * quantity * leverage
+                    else:
+                        unrealized_pnl = (entry_price - mark_price) * quantity * leverage
+                else:
+                    # Fallback: try API-provided unrealized fields if any
+                    for key_name in ("unrealized_pnl", "mtm_pnl", "pnl"):
+                        raw = pos.get(key_name)
+                        if raw is not None:
+                            try:
+                                unrealized_pnl = float(raw)
+                                break
+                            except (TypeError, ValueError):
+                                continue
+
+                # Get TP/SL from triggers (may be null for manual positions)
+                tp_price = pos.get("take_profit_trigger")
+                sl_price = pos.get("stop_loss_trigger")
+                
+                result.append({
+                    "position_id": position_id,
+                    "pair": pair,
+                    "side": side,
+                    "entry_price": entry_price,
+                    "quantity": quantity,
+                    "leverage": leverage,
+                    "tp_price": float(tp_price) if tp_price else None,
+                    "sl_price": float(sl_price) if sl_price else None,
+                    "unrealized_pnl": unrealized_pnl if unrealized_pnl is not None else 0.0,
+                    "margin": locked_margin,
+                    "mark_price": mark_price,
+                    "opened_at": pos.get("updated_at") or pos.get("created_at"),
+                    "status": "open",
+                    "source": "live"
+                })
+            except Exception as inner_e:
+                app.logger.warning(f"Failed to parse live position row: {inner_e} | raw={pos}")
 
         return jsonify(result)
 
