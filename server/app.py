@@ -1271,13 +1271,15 @@ def live_positions():
         if not key or not secret:
             return jsonify({"error": "API credentials not configured"}), 500
 
-        # Use documented List Positions endpoint
+        # Use List Positions endpoint and request INR-margined futures
         timeStamp = int(round(time.time() * 1000))
         body = {
             "timestamp": timeStamp,
             "page": "1",
             "size": "100",
-            "margin_currency_short_name": ["USDT"]
+            # IMPORTANT: Platform shows positions under INR margin wallet,
+            # so we must request INR-margined positions here.
+            "margin_currency_short_name": ["INR"]
         }
         
         json_body = json.dumps(body, separators=(',', ':'))
