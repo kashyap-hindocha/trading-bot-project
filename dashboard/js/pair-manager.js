@@ -415,6 +415,7 @@ function filterPairs() {
     const input = document.getElementById('pairSearchInput');
     searchFilter = input ? input.value.trim() : '';
     renderPairManager();
+    // After changing the visible list, prompt user to rescan if desired
 }
 
 // Show only enabled pairs
@@ -520,13 +521,13 @@ function updatePairManagerSummary() {
 function nextPairPage() {
     pairPage += 1;
     renderPairManager();
-    scanVisibleSignals();
+    // Signals will be scanned explicitly or via button
 }
 
 function prevPairPage() {
     pairPage -= 1;
     renderPairManager();
-    scanVisibleSignals();
+    // Signals will be scanned explicitly or via button
 }
 
 // Scan the currently visible pairs (top 10 in the list) for signal proximity
@@ -534,6 +535,17 @@ async function scanVisibleSignals() {
     try {
         const container = document.getElementById('pairManagerList');
         if (!container) return;
+
+        const scanBtn = document.getElementById('pairScanBtn');
+        const prevBtn = document.getElementById('pairPrevBtn');
+        const nextBtn = document.getElementById('pairNextBtn');
+
+        if (scanBtn) {
+            scanBtn.disabled = true;
+            scanBtn.textContent = 'Scanning...';
+        }
+        if (prevBtn) prevBtn.disabled = true;
+        if (nextBtn) nextBtn.disabled = true;
 
         const rows = Array.from(container.querySelectorAll('.pair-manager-row'));
         if (!rows.length) return;
@@ -584,5 +596,16 @@ async function scanVisibleSignals() {
     } catch (err) {
         console.error('Failed to scan visible signals:', err);
         showToast('Failed to scan signals', 'error');
+    } finally {
+        const scanBtn = document.getElementById('pairScanBtn');
+        const prevBtn = document.getElementById('pairPrevBtn');
+        const nextBtn = document.getElementById('pairNextBtn');
+
+        if (scanBtn) {
+            scanBtn.disabled = false;
+            scanBtn.textContent = '📡 Scan Signals (Top 10)';
+        }
+        if (prevBtn) prevBtn.disabled = false;
+        if (nextBtn) nextBtn.disabled = false;
     }
 }
