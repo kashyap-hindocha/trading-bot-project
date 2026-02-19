@@ -1259,6 +1259,8 @@ def live_positions():
         import hmac
         import hashlib
         import time
+        import json
+        import requests
         from dotenv import load_dotenv
         
         load_dotenv("/home/ubuntu/trading-bot/.env")
