@@ -661,7 +661,17 @@ def signal_readiness():
                 candles = client.get_candles(pair, interval, limit=150)
                 closes = [c.get("close") for c in candles if c.get("close") is not None]
                 readiness = _compute_readiness(closes)
-                if readiness:
+                # _compute_readiness may return None if not enough data; treat that as 0%
+                if readiness is None:
+                    results.append({
+                        "pair": pair,
+                        "readiness": 0.0,
+                        "bias": None,
+                        "ema_gap_pct": None,
+                        "rsi": None,
+                    })
+                else:
+                    # Even readiness 0.0 is meaningful; don't filter it out
                     results.append({"pair": pair, **readiness})
             except Exception as e:
                 app.logger.warning(f"Readiness failed for {pair}: {e}")
