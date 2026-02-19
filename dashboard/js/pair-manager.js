@@ -229,9 +229,15 @@ function renderPairManager() {
                            style="width: 100%; padding: 6px 8px; background: var(--gray-3); color: ${currentPrice > 0 ? 'var(--accent)' : 'var(--gray-1)'}; border: 1px solid var(--gray-2); border-radius: 4px; font-family: 'Space Mono'; font-size: 11px; cursor: help;">
                 </div>
                 
-                <!-- Status -->
+                <!-- Status + Signal proximity placeholder -->
                 <div style="flex: 1; text-align: right; font-size: 11px; color: var(--gray-1);">
-                    ${isEnabled ? '<span style="color: var(--green);">✓ ENABLED</span>' : '<span style="color: var(--gray-2);">○ Disabled</span>'}
+                    <div>
+                        ${isEnabled ? '<span style="color: var(--green);">✓ ENABLED</span>' : '<span style="color: var(--gray-2);">○ Disabled</span>'}
+                    </div>
+                    <div class="signal-meter" data-signal="${pair.pair}"
+                         style="margin-top: 4px; font-size: 10px; color: var(--gray-2);">
+                        Signal: —
+                    </div>
                 </div>
             </div>
         `;
@@ -492,5 +498,60 @@ function updatePairManagerSummary() {
     if (summaryEl) {
         summaryEl.textContent = enabledCount;
         summaryEl.style.color = enabledCount >= 10 ? 'var(--red)' : 'var(--accent)';
+    }
+}
+
+// Scan the currently visible pairs (top 10 in the list) for signal proximity
+async function scanVisibleSignals() {
+    try {
+        const container = document.getElementById('pairManagerList');
+        if (!container) return;
+
+        const rows = Array.from(container.querySelectorAll('.pair-manager-row'));
+        if (!rows.length) return;
+
+        // Take first 10 visible pairs to keep API cost low
+        const pairs = rows.slice(0, 10).map(row => row.getAttribute('data-pair')).filter(Boolean);
+        if (!pairs.length) return;
+
+        // Show loading text
+        pairs.forEach(pair => {
+            const meter = container.querySelector(`.signal-meter[data-signal="${pair}"]`);
+            if (meter) {
+                meter.textContent = 'Signal: scanning...';
+                meter.style.color = 'var(--gray-1)';
+            }
+        });
+
+        const resp = await fetch(`${API}/api/signal/readiness?pairs=` + encodeURIComponent(pairs.join(',')));
+        if (!resp.ok) {
+            showToast('Failed to scan signals', 'error');
+            return;
+        }
+
+        const data = await resp.json();
+        if (!Array.isArray(data)) return;
+
+        data.forEach(item => {
+            if (!item || !item.pair) return;
+            const meter = container.querySelector(`.signal-meter[data-signal="${item.pair}"]`);
+            if (!meter) return;
+
+            const readiness = Number(item.readiness || 0);
+            const pct = Math.min(100, Math.max(0, readiness));
+            meter.textContent = `Signal: ${pct.toFixed(1)}%`;
+
+            // Color-code by readiness
+            if (pct >= 80) {
+                meter.style.color = 'var(--green)';
+            } else if (pct >= 60) {
+                meter.style.color = 'var(--yellow)';
+            } else {
+                meter.style.color = 'var(--gray-2)';
+            }
+        });
+    } catch (err) {
+        console.error('Failed to scan visible signals:', err);
+        showToast('Failed to scan signals', 'error');
     }
 }

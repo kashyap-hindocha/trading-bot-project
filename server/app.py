@@ -1335,13 +1335,23 @@ def live_positions():
                         except (TypeError, ValueError):
                             continue
 
-                # Compute unrealized P&L in quote currency if we have a mark price
+                # Compute unrealized P&L in INR if possible
                 unrealized_pnl = None
                 if mark_price is not None and entry_price and quantity:
-                    if side == "buy":
-                        unrealized_pnl = (mark_price - entry_price) * quantity * leverage
+                    # If settlement_currency_avg_price is provided (e.g. INR/USDT),
+                    # use it to convert P&L into INR to match platform display.
+                    settlement_rate_raw = pos.get("settlement_currency_avg_price")
+                    try:
+                        settlement_rate = float(settlement_rate_raw) if settlement_rate_raw not in (None, 0, "") else None
+                    except (TypeError, ValueError):
+                        settlement_rate = None
+
+                    price_diff = (mark_price - entry_price) if side == "buy" else (entry_price - mark_price)
+                    if settlement_rate and settlement_rate > 0:
+                        unrealized_pnl = price_diff * quantity * leverage * settlement_rate
                     else:
-                        unrealized_pnl = (entry_price - mark_price) * quantity * leverage
+                        # Fallback: units will be in quote currency (e.g. USDT)
+                        unrealized_pnl = price_diff * quantity * leverage
                 else:
                     # Fallback: try API-provided unrealized fields if any
                     for key_name in ("unrealized_pnl", "mtm_pnl", "pnl"):
@@ -1356,6 +1366,19 @@ def live_positions():
                 # Get TP/SL from triggers (may be null for manual positions)
                 tp_price = pos.get("take_profit_trigger")
                 sl_price = pos.get("stop_loss_trigger")
+
+                # Convert timestamp (ms since epoch) to IST ISO string for dashboard
+                opened_raw = pos.get("activation_time") or pos.get("updated_at") or pos.get("created_at")
+                opened_at = None
+                from datetime import datetime, timezone
+                try:
+                    if isinstance(opened_raw, (int, float)):
+                        dt = datetime.fromtimestamp(opened_raw / 1000.0, tz=timezone.utc)
+                        opened_at = dt.astimezone(IST).isoformat()
+                    elif isinstance(opened_raw, str) and opened_raw:
+                        opened_at = opened_raw
+                except Exception:
+                    opened_at = None
                 
                 result.append({
                     "position_id": position_id,
@@ -1369,7 +1392,7 @@ def live_positions():
                     "unrealized_pnl": unrealized_pnl if unrealized_pnl is not None else 0.0,
                     "margin": locked_margin,
                     "mark_price": mark_price,
-                    "opened_at": pos.get("updated_at") or pos.get("created_at"),
+                    "opened_at": opened_at,
                     "status": "open",
                     "source": "live"
                 })
