@@ -7,6 +7,8 @@ let pairConfigsDB = [];  // Renamed to avoid conflict with app.js pairConfigs
 let showOnlyEnabledFilter = false;
 let searchFilter = '';
 let currentPrices = {};  // Store current prices for dynamic quantity calculation
+let pairPage = 1;
+const PAIRS_PER_PAGE = 10;
 
 // Calculate quantity based on INR amount, leverage, and current price
 function calculateQuantity(inrAmount, leverage, currentPrice) {
@@ -145,9 +147,22 @@ function renderPairManager() {
         if (enabledA !== enabledB) return enabledB - enabledA;
         return a.base.localeCompare(b.base);
     });
+
+    // Pagination
+    const totalPages = Math.max(1, Math.ceil(filteredPairs.length / PAIRS_PER_PAGE));
+    if (pairPage > totalPages) pairPage = totalPages;
+    if (pairPage < 1) pairPage = 1;
+    const startIdx = (pairPage - 1) * PAIRS_PER_PAGE;
+    const pagePairs = filteredPairs.slice(startIdx, startIdx + PAIRS_PER_PAGE);
+
+    // Update page indicators
+    const pageEl = document.getElementById('pairPage');
+    const totalEl = document.getElementById('pairTotalPages');
+    if (pageEl) pageEl.textContent = String(pairPage);
+    if (totalEl) totalEl.textContent = String(totalPages);
     
-    // Render
-    container.innerHTML = filteredPairs.map(pair => {
+    // Render current page
+    container.innerHTML = pagePairs.map(pair => {
         const cfg = configMap[pair.pair] || {
             enabled: 0,
             leverage: 5,
@@ -501,6 +516,19 @@ function updatePairManagerSummary() {
     }
 }
 
+// Pagination controls
+function nextPairPage() {
+    pairPage += 1;
+    renderPairManager();
+    scanVisibleSignals();
+}
+
+function prevPairPage() {
+    pairPage -= 1;
+    renderPairManager();
+    scanVisibleSignals();
+}
+
 // Scan the currently visible pairs (top 10 in the list) for signal proximity
 async function scanVisibleSignals() {
     try {
@@ -539,16 +567,19 @@ async function scanVisibleSignals() {
 
             const readiness = Number(item.readiness || 0);
             const pct = Math.min(100, Math.max(0, readiness));
-            meter.textContent = `Signal: ${pct.toFixed(1)}%`;
-
-            // Color-code by readiness
+            let color = 'var(--accent)';
             if (pct >= 80) {
-                meter.style.color = 'var(--green)';
+                color = 'var(--green)';
             } else if (pct >= 60) {
-                meter.style.color = 'var(--yellow)';
-            } else {
-                meter.style.color = 'var(--gray-2)';
+                color = 'var(--yellow)';
             }
+
+            meter.innerHTML = `
+                <div>Signal: ${pct.toFixed(1)}%</div>
+                <div style="margin-top: 2px; height: 3px; background: var(--gray-3); border-radius: 2px; overflow: hidden;">
+                  <div style="height: 100%; width: ${pct}%; background: ${color}; transition: width 0.3s;"></div>
+                </div>
+            `;
         });
     } catch (err) {
         console.error('Failed to scan visible signals:', err);

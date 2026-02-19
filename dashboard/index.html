@@ -101,36 +101,12 @@
       <div class="panel-title">
         ⚙️ Trading Mode
         <div class="panel-tools" style="font-size: 11px; color: var(--gray-2);">
-          Control single or multi-pair trading
+          Multi-pair trading is always enabled
         </div>
       </div>
       <div class="card" style="padding: 20px;">
         <div style="display: flex; gap: 20px; align-items: center; flex-wrap: wrap;">
-          <!-- Mode Toggle -->
-          <div style="flex: 0 0 auto;">
-            <div style="font-size: 11px; color: var(--gray-2); margin-bottom: 8px;">TRADING MODE</div>
-            <div style="display: flex; gap: 8px;">
-              <button id="pairModeSingle" class="mode-toggle-btn" onclick="setPairMode('SINGLE')"
-                style="padding: 8px 16px; background: var(--gray-3); color: var(--text); border: 1px solid var(--gray-2); border-radius: 4px; font-family: 'Space Mono'; font-size: 12px; cursor: pointer; transition: all 0.2s;">
-                SINGLE
-              </button>
-              <button id="pairModeMulti" class="mode-toggle-btn active" onclick="setPairMode('MULTI')"
-                style="padding: 8px 16px; background: var(--accent); color: #000; border: 1px solid var(--accent); border-radius: 4px; font-family: 'Space Mono'; font-size: 12px; font-weight: 700; cursor: pointer; transition: all 0.2s;">
-                MULTI
-              </button>
-            </div>
-          </div>
-
-          <!-- Pair Selector (for SINGLE mode) -->
-          <div id="pairSelectorContainer" style="flex: 1; min-width: 200px; display: none;">
-            <div style="font-size: 11px; color: var(--gray-2); margin-bottom: 8px;">SELECT PAIR</div>
-            <select id="pairSelector" onchange="onPairSelect()"
-              style="width: 100%; padding: 8px 12px; background: var(--bg); color: var(--accent); border: 1px solid var(--gray-2); border-radius: 4px; font-family: 'Space Mono'; font-size: 12px;">
-              <option value="">Loading pairs...</option>
-            </select>
-          </div>
-
-          <!-- Current Mode Info -->
+          <!-- Fixed Mode Info -->
           <div style="flex: 1; text-align: right;">
             <div style="font-size: 11px; color: var(--gray-2); margin-bottom: 4px;">STATUS</div>
             <div id="pairModeStatus" style="font-size: 14px; color: var(--accent); font-weight: 700;">
@@ -246,12 +222,12 @@
           <input type="text" id="pairSearchInput" placeholder="Search pairs (e.g., BTC, ETH)..." 
             oninput="filterPairs()"
             style="flex: 1; padding: 8px 12px; background: var(--bg); color: var(--text); border: 1px solid var(--gray-2); border-radius: 4px; font-family: 'Space Mono'; font-size: 12px;">
-          
+
           <button onclick="scanVisibleSignals()"
             style="padding: 8px 16px; background: var(--accent); color: #000; border: 1px solid var(--accent); border-radius: 4px; font-family: 'Space Mono'; font-size: 11px; font-weight: 700; cursor: pointer;">
             📡 Scan Signals (Top 10)
           </button>
-          
+
           <button onclick="showOnlyEnabled()" id="showEnabledBtn"
             style="padding: 8px 16px; background: var(--gray-3); color: var(--text); border: 1px solid var(--gray-2); border-radius: 4px; font-family: 'Space Mono'; font-size: 11px; cursor: pointer;">
             Show Enabled Only
@@ -269,6 +245,21 @@
         </div>
 
         <!-- Pair List with Config -->
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 11px; color: var(--gray-1);">
+          <div>
+            Page <span id="pairPage">1</span> / <span id="pairTotalPages">1</span>
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <button onclick="prevPairPage()"
+              style="padding: 4px 10px; background: var(--gray-3); color: var(--text); border: 1px solid var(--gray-2); border-radius: 4px; font-family: 'Space Mono'; font-size: 11px; cursor: pointer;">
+              ◀ Prev
+            </button>
+            <button onclick="nextPairPage()"
+              style="padding: 4px 10px; background: var(--gray-3); color: var(--text); border: 1px solid var(--gray-2); border-radius: 4px; font-family: 'Space Mono'; font-size: 11px; cursor: pointer;">
+              Next ▶
+            </button>
+          </div>
+        </div>
         <div id="pairManagerList" style="max-height: 400px; overflow-y: auto;">
           <div style="color: var(--gray-2); text-align: center; padding: 20px;">
             Loading available pairs...
