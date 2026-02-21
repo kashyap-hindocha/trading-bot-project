@@ -2,14 +2,41 @@
 
 ## What Changed?
 
-Your bot now supports **trading multiple coins simultaneously**! 
+Your bot now supports **trading multiple coins simultaneously** with **automated confidence-based pair management**! 
 
 ### New Features:
-✅ Dashboard UI to select which coins to trade  
+✅ **Automated confidence-based pair enabling** — Pairs with >75% strategy confidence are auto-enabled  
+✅ **Batch processing** — Evaluates 5 pairs at a time to avoid API exhaustion  
+✅ **10-minute cycle** — Full confidence check runs every 10 minutes  
+✅ **Auto-disable on drop** — Pairs below 75% confidence are automatically disabled  
 ✅ Independent bot process for each enabled pair  
-✅ Per-pair leverage and quantity settings  
+✅ Per-pair leverage and quantity settings (defaults for auto-enabled pairs)  
 ✅ Centralized bot manager handles all instances  
 ✅ Database-driven configuration  
+
+### Removed:
+❌ **Pair Manager** — Manual pair selection has been removed. Pairs are now enabled/disabled automatically based on strategy confidence.
+
+---
+
+## Automated Confidence Check Cycle
+
+The system runs a background process that:
+
+1. **Every 10 minutes** — Evaluates all configured trading pairs in batches of 5
+2. **Phase 1** — Re-evaluates previously auto-enabled pairs. Any pair with confidence < 75% is automatically disabled
+3. **Phase 2** — Evaluates disabled pairs in batches of 5. Any pair with confidence > 75% is automatically enabled
+4. **Dashboard** — Shows which pairs are being evaluated, a countdown to the next cycle, and the auto-enabled pairs review panel with confidence bars
+
+### Batch Processing
+- Exactly **5 pairs per batch** to prevent API exhaustion and request timeouts
+- UI displays the 5 pairs currently being evaluated with an animated indicator
+- Countdown timer shows time until the next 10-minute cycle
+
+### Auto-Enable / Auto-Disable
+- **Enable**: Confidence > 75% → pair is enabled for trading (no manual action)
+- **Disable**: Confidence drops below 75% at the start of a cycle → pair is disabled
+- Default leverage (5x), quantity (0.001), and INR amount (300) for newly auto-enabled pairs
 
 ---
 
@@ -44,12 +71,8 @@ sudo systemctl status bot
 sudo systemctl restart server
 ```
 
-### 4. Configure Pairs via Dashboard
-1. Open dashboard: `http://your-server-ip`
-2. Scroll to **"Coin Manager"** section
-3. Toggle coins you want to trade (BTC, ETH, SOL, etc.)
-4. Set leverage and quantity for each pair
-5. Click **"Apply Changes & Restart Bots"**
+### 4. Seed Pair Config (First Run)
+On first run, if `pair_config` is empty, the batch checker seeds it from CoinDCX's active instruments (USDT pairs). No manual configuration is required for the confidence check to start.
 
 ---
 
@@ -68,11 +91,12 @@ bot_manager.py (main process)
 - **Database**: Stores which pairs are enabled and their settings
 
 ### Process Flow:
-1. Dashboard updates `pair_config` table
-2. Bot manager checks database every 30 seconds
-3. Starts new bots for enabled pairs
-4. Stops bots for disabled pairs
-5. Auto-restarts crashed bots
+1. **Batch confidence checker** (runs in server process) evaluates pairs every 10 minutes in batches of 5
+2. Pairs with confidence > 75% are auto-enabled; pairs below 75% are auto-disabled
+3. Bot manager checks database every 30 seconds
+4. Starts new bots for enabled pairs
+5. Stops bots for disabled pairs
+6. Auto-restarts crashed bots
 
 ---
 
@@ -107,9 +131,11 @@ tail -f /home/ubuntu/trading-bot/data/bot.log
 ```
 
 ### Dashboard:
-- **Trade History** now shows which pair each trade belongs to
+- **Confidence Check (Background)** — Shows batch status, which pairs are being evaluated, countdown to next cycle, and auto-enabled pairs with confidence bars
+- **Trading Pairs** — Shows enabled pairs sorted by signal strength (auto-enabled pairs)
+- **Trade History** — Shows which pair each trade belongs to
 - **All metrics** aggregate across all enabled pairs
-- **Logs** show start/stop events for each pair
+- **Logs** show start/stop events and auto-enable/disable actions
 
 ---
 
@@ -118,10 +144,12 @@ tail -f /home/ubuntu/trading-bot/data/bot.log
 ### Database Table: `pair_config`
 ```sql
 CREATE TABLE pair_config (
-    pair       TEXT UNIQUE,      -- e.g., "B-BTC_USDT"
-    enabled    INTEGER,          -- 0=off, 1=on
-    leverage   INTEGER,          -- 1-20
-    quantity   REAL             -- Order size in base currency
+    pair         TEXT UNIQUE,      -- e.g., "B-BTC_USDT"
+    enabled      INTEGER,          -- 0=off, 1=on
+    auto_enabled INTEGER DEFAULT 0, -- 1=was auto-enabled by batch checker
+    leverage     INTEGER,          -- 1-20
+    quantity     REAL,             -- Order size in base currency
+    inr_amount   REAL              -- INR amount per trade
 );
 ```
 
@@ -130,6 +158,8 @@ CREATE TABLE pair_config (
 - `GET /api/pairs/config` - Get current pair configurations
 - `POST /api/pairs/config/update` - Update single pair config
 - `POST /api/pairs/config/bulk` - Bulk update multiple pairs
+- `GET /api/batch/status` - Batch checker status (current batch, countdown, auto-enabled pairs)
+- `GET /api/batch/auto-enabled` - Auto-enabled pairs with confidence/readiness for review panel
 
 ---
 
@@ -149,8 +179,12 @@ tail -50 /home/ubuntu/trading-bot/data/bot_manager.log
 - Visit `/api/pairs/available` to see raw response
 - Check browser console for errors
 
+### Pairs not auto-enabling?
+- Ensure strategy conditions are met (confidence must exceed 75%)
+- Check server logs for batch checker errors
+- Visit `/api/batch/status` to see current batch state and countdown
+
 ### Changes not applying?
-- Make sure to click "Apply Changes" button
 - Restart bot service manually if auto-restart fails:
   ```bash
   sudo systemctl restart bot
@@ -175,7 +209,7 @@ Example: 3 pairs × 0.001 BTC × 5x leverage = significant exposure
 
 If you want to go back to trading just one pair:
 
-1. In dashboard, disable all pairs except one (e.g., BTC)
+1. Use `POST /api/pairs/config/update` to disable pairs you don't want (or wait for auto-disable when confidence drops)
 2. Or edit `bot.service` to use `bot/main.py` instead of `bot/bot_manager.py`
 3. Restart: `sudo systemctl restart bot`
 

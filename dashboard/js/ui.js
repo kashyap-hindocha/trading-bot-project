@@ -201,36 +201,27 @@ function renderFavorites() {
   const panel = document.getElementById('favoritesPanel');
   if (!panel) return;
 
-  // Use enabled pairs from pair manager (pairConfigsDB)
-  let enabledPairs = [];
-  if (typeof pairConfigsDB !== 'undefined' && pairConfigsDB.length > 0) {
-    enabledPairs = pairConfigsDB.filter(c => c.enabled === 1);
-  }
+  // Use pair signals (enabled pairs from auto-enabled / pair_signals API)
+  const enabledPairs = (typeof pairSignals !== 'undefined' && Array.isArray(pairSignals))
+    ? pairSignals
+    : [];
 
   if (enabledPairs.length === 0) {
-    panel.innerHTML = '<div class="loading" style="padding: 10px 0; font-size: 11px;">Enable pairs in Pair Manager below</div>';
+    panel.innerHTML = '<div class="loading" style="padding: 10px 0; font-size: 11px;">No auto-enabled pairs yet</div>';
     return;
   }
 
   panel.innerHTML = enabledPairs.slice(0, 10).map(cfg => {
     const baseCoin = cfg.pair.replace('B-', '').replace('_USDT', '');
-    
-    // Get signal strength if available
-    let signalInfo = '';
-    if (typeof pairSignals !== 'undefined' && pairSignals.length > 0) {
-      const pairData = pairSignals.find(p => p.pair === cfg.pair);
-      if (pairData) {
-        const signalPct = Math.min(100, Math.max(0, pairData.signal_strength || 0));
-        signalInfo = `<div style="font-size: 9px; color: var(--gray-1); margin-top: 2px;">Signal: ${signalPct.toFixed(1)}%</div>`;
-      }
-    }
+    const signalPct = Math.min(100, Math.max(0, cfg.signal_strength || 0));
+    const signalInfo = `<div style="font-size: 9px; color: var(--gray-1); margin-top: 2px;">Signal: ${signalPct.toFixed(1)}%</div>`;
 
     return `
       <div class="fav-item" data-pair="${cfg.pair}" style="padding: 8px; background: var(--gray-3); border: 1px solid var(--gray-2); border-radius: 4px; margin-bottom: 4px;">
         <div style="display: flex; justify-content: space-between; align-items: center;">
           <div>
             <div style="font-weight: 700; color: var(--accent); font-size: 12px;">${baseCoin}</div>
-            <div style="font-size: 9px; color: var(--gray-1);">Lev: ${cfg.leverage}x | ₹${cfg.inr_amount}</div>
+            <div style="font-size: 9px; color: var(--gray-1);">Lev: ${cfg.leverage || 5}x | ₹${cfg.inr_amount || 300}</div>
             ${signalInfo}
           </div>
         </div>

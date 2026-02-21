@@ -122,7 +122,7 @@
       <div class="panel-title">
         📊 Trading Pairs
         <div class="panel-tools" style="font-size: 11px; color: var(--gray-2);">
-          Sorted by signal strength (top 10)
+          Only currently auto-enabled pairs (≥75% confidence) · Sorted by signal strength
         </div>
       </div>
       <div id="pairSignalsContainer" style="display: flex; gap: 10px; flex-wrap: wrap;">
@@ -207,68 +207,36 @@
     </div>
 
 
-    <!-- Pair Manager Section (NEW) -->
-    <div class="pair-manager-section" style="margin: 20px 0;">
+    <!-- Confidence Check (Background) — Live batch display + countdown only -->
+    <div class="batch-status-section" style="margin: 20px 0;">
       <div class="panel-title">
-        ⚙️ Pair Manager
+        🔄 Confidence Check (Background)
         <div class="panel-tools" style="font-size: 11px; color: var(--gray-2);">
-          Select up to 10 pairs to trade with custom leverage & INR amounts
+          Auto-enables pairs &gt;75% confidence · Every 10 min
         </div>
       </div>
       
       <div class="chart-panel" style="padding: 20px;">
-        <!-- Search and Filter -->
-        <div style="display: flex; gap: 12px; margin-bottom: 16px; align-items: center;">
-          <input type="text" id="pairSearchInput" placeholder="Search pairs (e.g., BTC, ETH)..." 
-            oninput="filterPairs()"
-            style="flex: 1; padding: 8px 12px; background: var(--bg); color: var(--text); border: 1px solid var(--gray-2); border-radius: 4px; font-family: 'Space Mono'; font-size: 12px;">
-
-          <button id="pairScanBtn" onclick="scanVisibleSignals()"
-            style="padding: 8px 16px; background: var(--accent); color: #000; border: 1px solid var(--accent); border-radius: 4px; font-family: 'Space Mono'; font-size: 11px; font-weight: 700; cursor: pointer;">
-            📡 Scan Signals (Top 10)
-          </button>
-
-          <button onclick="showOnlyEnabled()" id="showEnabledBtn"
-            style="padding: 8px 16px; background: var(--gray-3); color: var(--text); border: 1px solid var(--gray-2); border-radius: 4px; font-family: 'Space Mono'; font-size: 11px; cursor: pointer;">
-            Show Enabled Only
-          </button>
-          
-          <button onclick="disableAllPairs()"
-            style="padding: 8px 16px; background: var(--red); color: #fff; border: 1px solid var(--red); border-radius: 4px; font-family: 'Space Mono'; font-size: 11px; font-weight: 700; cursor: pointer;">
-            Disable All
-          </button>
-          
-          <button onclick="refreshAvailablePairs()"
-            style="padding: 8px 16px; background: var(--accent); color: #000; border: 1px solid var(--accent); border-radius: 4px; font-family: 'Space Mono'; font-size: 11px; font-weight: 700; cursor: pointer;">
-            🔄 Refresh Pairs
-          </button>
-        </div>
-
-        <!-- Pair List with Config -->
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 11px; color: var(--gray-1);">
-          <div>
-            Page <span id="pairPage">1</span> / <span id="pairTotalPages">1</span>
+        <!-- During active cycle: live batch processing display with animation -->
+        <div id="batchLiveDisplay" style="display: none; margin-bottom: 12px; padding: 16px; background: var(--gray-3); border: 1px solid var(--accent); border-radius: 6px;">
+          <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+            <span id="batchStatusDot" class="batch-dot pulse" style="width: 12px; height: 12px; border-radius: 50%; background: var(--accent);"></span>
+            <span id="batchStatusText" style="font-weight: 700; color: var(--accent);">Processing...</span>
+            <span id="batchCurrentPairs" style="color: var(--text); font-size: 13px; font-weight: 600;">
+              —
+            </span>
           </div>
-          <div style="display: flex; gap: 8px;">
-            <button id="pairPrevBtn" onclick="prevPairPage()"
-              style="padding: 4px 10px; background: var(--gray-3); color: var(--text); border: 1px solid var(--gray-2); border-radius: 4px; font-family: 'Space Mono'; font-size: 11px; cursor: pointer;">
-              ◀ Prev
-            </button>
-            <button id="pairNextBtn" onclick="nextPairPage()"
-              style="padding: 4px 10px; background: var(--gray-3); color: var(--text); border: 1px solid var(--gray-2); border-radius: 4px; font-family: 'Space Mono'; font-size: 11px; cursor: pointer;">
-              Next ▶
-            </button>
-          </div>
+          <div style="font-size: 11px; color: var(--gray-1); margin-top: 8px;">Evaluating these 5 pairs — updates as each batch completes</div>
         </div>
-        <div id="pairManagerList" style="max-height: 400px; overflow-y: auto;">
-          <div style="color: var(--gray-2); text-align: center; padding: 20px;">
-            Loading available pairs...
+        <!-- During 10-min wait: idle + countdown -->
+        <div id="batchIdleDisplay" style="display: flex; align-items: center; gap: 16px; flex-wrap: wrap;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span id="batchIdleDot" class="batch-dot" style="width: 10px; height: 10px; border-radius: 50%; background: var(--gray-2);"></span>
+            <span id="batchIdleText" style="font-size: 12px;">Checking...</span>
           </div>
-        </div>
-
-        <!-- Summary -->
-        <div id="pairManagerSummary" style="margin-top: 16px; padding: 12px; background: var(--gray-3); border-radius: 4px; font-size: 11px; color: var(--gray-1);">
-          <span id="enabledCount">0</span> pairs enabled (max 10)
+          <div id="batchCountdown" style="color: var(--gray-1); font-size: 12px;">
+            Next cycle in: <span id="batchCountdownVal">—</span>
+          </div>
         </div>
       </div>
     </div>
@@ -353,7 +321,7 @@
   <script src="js/data.js"></script>
   <script src="js/ui.js"></script>
   <script src="js/pair-mode.js"></script>
-  <script src="js/pair-manager.js"></script>
+  <script src="js/batch-status.js"></script>
   <script src="js/init.js"></script>
 
 </body>

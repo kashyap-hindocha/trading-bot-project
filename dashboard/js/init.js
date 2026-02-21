@@ -16,8 +16,10 @@ document.addEventListener('DOMContentLoaded', async function () {
   await loadPairMode();
   await loadPairSignals(); // Load horizontal pair signals
 
-  // Load pair manager (available pairs and configs)
-  await loadAvailablePairs();
+  // Load batch status and auto-enabled pairs
+  if (typeof refreshBatchUI === 'function') {
+    await refreshBatchUI();
+  }
 
   // NOW populate pair selectors — pairSignals is ready
   populatePairSelectors();
@@ -35,15 +37,9 @@ document.addEventListener('DOMContentLoaded', async function () {
   setInterval(updatePriceChart, REFRESH_MS * 2);
   setInterval(updateCandleChart, 10000); // Refresh candlesticks every 10s
   
-  // Refresh pair prices every 30 seconds for quantity calculations
-  setInterval(async () => {
-    if (typeof loadCurrentPrices === 'function') {
-      await loadCurrentPrices();
-      // Re-render pair manager to update quantities
-      if (typeof renderPairManager === 'function') {
-        renderPairManager();
-      }
-    }
-  }, 30000);
+  // Batch status self-schedules: every 2s during processing, 30s when idle
+  if (typeof loadBatchStatus === 'function') {
+    loadBatchStatus();
+  }
 });
 
