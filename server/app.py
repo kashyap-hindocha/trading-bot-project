@@ -714,7 +714,10 @@ def _batch_compute_readiness(pairs, client, interval):
 
 
 def _run_batch_cycle():
-    """Run one full batch confidence-check cycle."""
+    """Run one full batch confidence-check cycle.
+    All pairs are processed in batches of 5 (no wait between batches).
+    The 10-minute wait occurs ONCE after the entire cycle completes.
+    """
     global _batch_state
     if not STRATEGY_MANAGER_LOADED:
         _batch_state["last_error"] = "Strategy manager not loaded"
@@ -770,14 +773,17 @@ def _run_batch_cycle():
 
 
 def _batch_checker_loop():
-    """Background thread: run batch cycle every 10 minutes."""
+    """Background thread: run full cycle (all batches) then wait 10 minutes.
+    No wait between batches — 10 min wait only after entire cycle completes.
+    """
     import time
     while True:
         try:
-            _run_batch_cycle()
+            _run_batch_cycle()  # Processes ALL batches back-to-back
         except Exception as e:
             app.logger.error(f"Batch checker error: {e}")
             _batch_state["last_error"] = str(e)
+        # Set next_run_at only after full cycle completes; then wait 10 min
         next_run = datetime.now(IST) + timedelta(seconds=CYCLE_INTERVAL_SEC)
         _batch_state["next_run_at"] = next_run.isoformat()
         _batch_state["seconds_until_next"] = CYCLE_INTERVAL_SEC

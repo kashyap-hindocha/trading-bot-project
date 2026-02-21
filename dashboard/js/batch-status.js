@@ -39,6 +39,7 @@ function renderBatchStatus(data) {
   if (lastError) {
     dot.style.background = 'var(--red)';
     text.textContent = 'Error';
+    countdownVal.textContent = '—';
   } else if (isProcessing) {
     dot.style.background = 'var(--accent)';
     dot.classList.add('pulse');
@@ -49,15 +50,16 @@ function renderBatchStatus(data) {
     } else {
       currentPairs.textContent = '—';
     }
+    // Countdown only starts after full cycle; during processing show placeholder
+    countdownVal.textContent = '—';
   } else {
     dot.style.background = 'var(--green)';
     dot.classList.remove('pulse');
     text.textContent = 'Idle';
     currentPairs.textContent = '—';
+    const sec = Math.max(0, typeof secondsUntil === 'number' ? secondsUntil : (data.seconds_until_next ?? 600));
+    countdownVal.textContent = formatCountdown(sec);
   }
-
-  const sec = Math.max(0, typeof secondsUntil === 'number' ? secondsUntil : (data.seconds_until_next ?? 600));
-  countdownVal.textContent = formatCountdown(sec);
 
   // Start countdown ticker if not already running
   if (!batchCountdownInterval) {
