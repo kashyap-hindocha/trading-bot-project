@@ -18,9 +18,25 @@ except Exception as e:
     STRATEGY_MANAGER_LOADED = False
 
 from coindcx import CoinDCXREST
+import threading
 
 # IST timezone (UTC+5:30)
 IST = timezone(timedelta(hours=5, minutes=30))
+
+# Confidence threshold for auto-enable/disable (75%)
+CONFIDENCE_THRESHOLD = 75.0
+BATCH_SIZE = 5
+CYCLE_INTERVAL_SEC = 600  # 10 minutes
+
+# Batch checker state (for UI)
+_batch_state = {
+    "current_batch": [],
+    "is_processing": False,
+    "cycle_started_at": None,
+    "next_run_at": None,
+    "last_run_at": None,
+    "last_error": None,
+}
 
 app = Flask(__name__)
 CORS(app)
@@ -643,6 +659,138 @@ def _compute_readiness(closes):
     }
 
 
+def _get_coindcx_client():
+    """Get CoinDCX client (authenticated if available, else public)."""
+    try:
+        from dotenv import load_dotenv
+        load_dotenv("/home/ubuntu/trading-bot/.env")
+        key = os.getenv("COINDCX_API_KEY")
+        secret = os.getenv("COINDCX_API_SECRET")
+        if key and secret:
+            return CoinDCXREST(key, secret)
+    except Exception:
+        pass
+    return CoinDCXREST("", "")
+
+
+def _seed_pair_config_if_empty():
+    """Seed pair_config from CoinDCX if empty."""
+    configs = db.get_all_pair_configs()
+    if configs:
+        return
+    try:
+        client = _get_coindcx_client()
+        instruments = client.get_active_instruments()
+        if not isinstance(instruments, list):
+            return
+        for inst in instruments:
+            symbol = inst if isinstance(inst, str) else (inst.get("symbol") or inst.get("pair", ""))
+            if symbol and "USDT" in symbol:
+                try:
+                    db.upsert_pair_config(symbol, 0, 5, 0.001, 300.0)
+                except Exception:
+                    pass
+        app.logger.info("Seeded pair_config from CoinDCX")
+    except Exception as e:
+        app.logger.warning(f"Could not seed pair_config: {e}")
+
+
+def _batch_compute_readiness(pairs, client, interval):
+    """Compute readiness for a batch of pairs (max 5). Returns list of {pair, readiness, ...}."""
+    results = []
+    for pair in pairs[:BATCH_SIZE]:
+        try:
+            candles = client.get_candles(pair, interval, limit=150)
+            closes = [c.get("close") for c in candles if c.get("close") is not None]
+            r = _compute_readiness(closes)
+            if r is None:
+                results.append({"pair": pair, "readiness": 0.0, "bias": None, "ema_gap_pct": None, "rsi": None})
+            else:
+                results.append({"pair": pair, **r})
+        except Exception as e:
+            app.logger.warning(f"Readiness failed for {pair}: {e}")
+            results.append({"pair": pair, "readiness": 0.0, "bias": None, "ema_gap_pct": None, "rsi": None})
+    return results
+
+
+def _run_batch_cycle():
+    """Run one full batch confidence-check cycle."""
+    global _batch_state
+    if not STRATEGY_MANAGER_LOADED:
+        _batch_state["last_error"] = "Strategy manager not loaded"
+        return
+
+    _batch_state["is_processing"] = True
+    _batch_state["cycle_started_at"] = datetime.now(IST).isoformat()
+    _batch_state["last_error"] = None
+
+    try:
+        _seed_pair_config_if_empty()
+        all_configs = db.get_all_pair_configs()
+        if not all_configs:
+            _batch_state["is_processing"] = False
+            _batch_state["last_run_at"] = datetime.now(IST).isoformat()
+            return
+
+        active_strategy = strategy_manager.strategy_manager.get_active_strategy()
+        interval = active_strategy.get_config().get("interval", "1m") if active_strategy else "1m"
+        client = _get_coindcx_client()
+
+        # Phase 1: Re-evaluate auto-enabled pairs, disable if confidence < 75%
+        auto_enabled = db.get_auto_enabled_pairs()
+        auto_pairs = [c["pair"] for c in auto_enabled]
+        for i in range(0, len(auto_pairs), BATCH_SIZE):
+            batch = auto_pairs[i : i + BATCH_SIZE]
+            _batch_state["current_batch"] = batch
+            results = _batch_compute_readiness(batch, client, interval)
+            for r in results:
+                if r.get("readiness", 0) < CONFIDENCE_THRESHOLD:
+                    db.update_pair_auto_status(r["pair"], 0, 0)
+                    db.log_event("INFO", f"Auto-disabled {r['pair']} (confidence {r.get('readiness', 0):.1f}% < {CONFIDENCE_THRESHOLD}%)")
+
+        # Phase 2: Evaluate disabled pairs in batches of 5, enable if confidence > 75%
+        disabled = [c for c in all_configs if c.get("enabled") != 1]
+        disabled_pairs = [c["pair"] for c in disabled]
+        for i in range(0, len(disabled_pairs), BATCH_SIZE):
+            batch = disabled_pairs[i : i + BATCH_SIZE]
+            _batch_state["current_batch"] = batch
+            results = _batch_compute_readiness(batch, client, interval)
+            for r in results:
+                if r.get("readiness", 0) > CONFIDENCE_THRESHOLD:
+                    db.update_pair_auto_status(r["pair"], 1, 1)
+                    db.log_event("INFO", f"Auto-enabled {r['pair']} (confidence {r.get('readiness', 0):.1f}% > {CONFIDENCE_THRESHOLD}%)")
+
+        _batch_state["current_batch"] = []
+    except Exception as e:
+        _batch_state["last_error"] = str(e)
+        app.logger.error(f"Batch cycle error: {e}")
+    finally:
+        _batch_state["is_processing"] = False
+        _batch_state["last_run_at"] = datetime.now(IST).isoformat()
+
+
+def _batch_checker_loop():
+    """Background thread: run batch cycle every 10 minutes."""
+    import time
+    while True:
+        try:
+            _run_batch_cycle()
+        except Exception as e:
+            app.logger.error(f"Batch checker error: {e}")
+            _batch_state["last_error"] = str(e)
+        next_run = datetime.now(IST) + timedelta(seconds=CYCLE_INTERVAL_SEC)
+        _batch_state["next_run_at"] = next_run.isoformat()
+        _batch_state["seconds_until_next"] = CYCLE_INTERVAL_SEC
+        time.sleep(CYCLE_INTERVAL_SEC)
+
+
+def _start_batch_checker():
+    """Start the batch checker background thread."""
+    t = threading.Thread(target=_batch_checker_loop, daemon=True)
+    t.start()
+    app.logger.info("Batch confidence checker started (10 min cycle)")
+
+
 @app.route("/api/signal/readiness")
 def signal_readiness():
     try:
@@ -929,6 +1077,74 @@ def pairs_config_bulk():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/batch/status")
+def batch_status():
+    """Get batch checker status for UI: current batch, is_processing, countdown, auto-enabled pairs."""
+    try:
+        auto_enabled = db.get_auto_enabled_pairs()
+        # Enrich with confidence from pair_signals / readiness - we use last known from batch
+        # For now return configs; UI can fetch readiness separately for bars
+        now = datetime.now(IST)
+        next_run = _batch_state.get("next_run_at")
+        next_run_dt = datetime.fromisoformat(next_run) if next_run else None
+        seconds_until_next = int((next_run_dt - now).total_seconds()) if next_run_dt and next_run_dt > now else CYCLE_INTERVAL_SEC
+
+        return jsonify({
+            "current_batch": _batch_state.get("current_batch", []),
+            "is_processing": _batch_state.get("is_processing", False),
+            "cycle_started_at": _batch_state.get("cycle_started_at"),
+            "next_run_at": _batch_state.get("next_run_at"),
+            "seconds_until_next": max(0, seconds_until_next),
+            "last_run_at": _batch_state.get("last_run_at"),
+            "last_error": _batch_state.get("last_error"),
+            "auto_enabled_pairs": [
+                {"pair": c["pair"], "leverage": c.get("leverage", 5), "quantity": c.get("quantity", 0.001), "inr_amount": c.get("inr_amount", 300)}
+                for c in auto_enabled
+            ],
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/batch/auto-enabled")
+def batch_auto_enabled():
+    """Get auto-enabled pairs with readiness/confidence for review panel."""
+    try:
+        pairs = db.get_auto_enabled_pairs()
+        if not pairs:
+            return jsonify([])
+
+        interval = "1m"
+        if STRATEGY_MANAGER_LOADED:
+            try:
+                active = strategy_manager.strategy_manager.get_active_strategy()
+                if active:
+                    interval = active.get_config().get("interval", "1m")
+            except Exception:
+                pass
+        client = _get_coindcx_client()
+        pair_names = [p["pair"] for p in pairs]
+        results = _batch_compute_readiness(pair_names, client, interval)
+        readiness_map = {r["pair"]: r for r in results}
+
+        result = []
+        for p in pairs:
+            r = readiness_map.get(p["pair"], {})
+            result.append({
+                "pair": p["pair"],
+                "readiness": r.get("readiness", 0),
+                "bias": r.get("bias"),
+                "rsi": r.get("rsi"),
+                "ema_gap_pct": r.get("ema_gap_pct"),
+                "leverage": p.get("leverage", 5),
+                "quantity": p.get("quantity", 0.001),
+                "inr_amount": p.get("inr_amount", 300),
+            })
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/pairs/config/disable_all", methods=["POST"])
 def pairs_config_disable_all():
     """Disable all pairs at once."""
@@ -1178,7 +1394,7 @@ def pair_signals():
         enabled_pairs = db.get_enabled_pairs()
         
         if not enabled_pairs:
-            app.logger.info("No enabled pairs found. Enable pairs in Pair Manager.")
+            app.logger.info("No enabled pairs found. Pairs are auto-enabled when confidence > 75%.")
             return jsonify([])
         
         # Import strategy to calculate signal strength
@@ -1434,6 +1650,9 @@ def debug_positions():
 
 
 
+
+# Start batch checker on module load (works with both app.run and gunicorn)
+_start_batch_checker()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False)

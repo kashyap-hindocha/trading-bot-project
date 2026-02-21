@@ -207,68 +207,34 @@
     </div>
 
 
-    <!-- Pair Manager Section (NEW) -->
-    <div class="pair-manager-section" style="margin: 20px 0;">
+    <!-- Auto-Enabled Pairs & Batch Status Section -->
+    <div class="batch-status-section" style="margin: 20px 0;">
       <div class="panel-title">
-        ⚙️ Pair Manager
+        🔄 Confidence Check (Background)
         <div class="panel-tools" style="font-size: 11px; color: var(--gray-2);">
-          Select up to 10 pairs to trade with custom leverage & INR amounts
+          Auto-enables pairs &gt;75% confidence · Every 10 min
         </div>
       </div>
       
       <div class="chart-panel" style="padding: 20px;">
-        <!-- Search and Filter -->
-        <div style="display: flex; gap: 12px; margin-bottom: 16px; align-items: center;">
-          <input type="text" id="pairSearchInput" placeholder="Search pairs (e.g., BTC, ETH)..." 
-            oninput="filterPairs()"
-            style="flex: 1; padding: 8px 12px; background: var(--bg); color: var(--text); border: 1px solid var(--gray-2); border-radius: 4px; font-family: 'Space Mono'; font-size: 12px;">
-
-          <button id="pairScanBtn" onclick="scanVisibleSignals()"
-            style="padding: 8px 16px; background: var(--accent); color: #000; border: 1px solid var(--accent); border-radius: 4px; font-family: 'Space Mono'; font-size: 11px; font-weight: 700; cursor: pointer;">
-            📡 Scan Signals (Top 10)
-          </button>
-
-          <button onclick="showOnlyEnabled()" id="showEnabledBtn"
-            style="padding: 8px 16px; background: var(--gray-3); color: var(--text); border: 1px solid var(--gray-2); border-radius: 4px; font-family: 'Space Mono'; font-size: 11px; cursor: pointer;">
-            Show Enabled Only
-          </button>
-          
-          <button onclick="disableAllPairs()"
-            style="padding: 8px 16px; background: var(--red); color: #fff; border: 1px solid var(--red); border-radius: 4px; font-family: 'Space Mono'; font-size: 11px; font-weight: 700; cursor: pointer;">
-            Disable All
-          </button>
-          
-          <button onclick="refreshAvailablePairs()"
-            style="padding: 8px 16px; background: var(--accent); color: #000; border: 1px solid var(--accent); border-radius: 4px; font-family: 'Space Mono'; font-size: 11px; font-weight: 700; cursor: pointer;">
-            🔄 Refresh Pairs
-          </button>
-        </div>
-
-        <!-- Pair List with Config -->
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 11px; color: var(--gray-1);">
-          <div>
-            Page <span id="pairPage">1</span> / <span id="pairTotalPages">1</span>
+        <!-- Batch Status Bar -->
+        <div id="batchStatusBar" style="display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; padding: 12px; background: var(--gray-3); border-radius: 6px; font-size: 12px;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span id="batchStatusDot" class="batch-dot" style="width: 10px; height: 10px; border-radius: 50%; background: var(--gray-2);"></span>
+            <span id="batchStatusText">Checking...</span>
           </div>
-          <div style="display: flex; gap: 8px;">
-            <button id="pairPrevBtn" onclick="prevPairPage()"
-              style="padding: 4px 10px; background: var(--gray-3); color: var(--text); border: 1px solid var(--gray-2); border-radius: 4px; font-family: 'Space Mono'; font-size: 11px; cursor: pointer;">
-              ◀ Prev
-            </button>
-            <button id="pairNextBtn" onclick="nextPairPage()"
-              style="padding: 4px 10px; background: var(--gray-3); color: var(--text); border: 1px solid var(--gray-2); border-radius: 4px; font-family: 'Space Mono'; font-size: 11px; cursor: pointer;">
-              Next ▶
-            </button>
+          <div id="batchCurrentPairs" style="color: var(--accent); font-size: 11px;">
+            —
           </div>
-        </div>
-        <div id="pairManagerList" style="max-height: 400px; overflow-y: auto;">
-          <div style="color: var(--gray-2); text-align: center; padding: 20px;">
-            Loading available pairs...
+          <div id="batchCountdown" style="color: var(--gray-1);">
+            Next cycle in: <span id="batchCountdownVal">—</span>
           </div>
         </div>
 
-        <!-- Summary -->
-        <div id="pairManagerSummary" style="margin-top: 16px; padding: 12px; background: var(--gray-3); border-radius: 4px; font-size: 11px; color: var(--gray-1);">
-          <span id="enabledCount">0</span> pairs enabled (max 10)
+        <!-- Auto-Enabled Pairs Review Panel -->
+        <div class="panel-title" style="font-size: 12px; margin-bottom: 12px;">Auto-Enabled Pairs (Confidence &gt;75%)</div>
+        <div id="autoEnabledPanel" style="display: flex; gap: 10px; flex-wrap: wrap; min-height: 60px;">
+          <div style="color: var(--gray-2); font-size: 12px; padding: 10px;">Loading...</div>
         </div>
       </div>
     </div>
@@ -353,7 +319,7 @@
   <script src="js/data.js"></script>
   <script src="js/ui.js"></script>
   <script src="js/pair-mode.js"></script>
-  <script src="js/pair-manager.js"></script>
+  <script src="js/batch-status.js"></script>
   <script src="js/init.js"></script>
 
 </body>

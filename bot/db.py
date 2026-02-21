@@ -80,6 +80,9 @@ def init_db():
     if "inr_amount" not in cols:
         c.execute("ALTER TABLE pair_config ADD COLUMN inr_amount REAL DEFAULT 300.0")
         c.execute("UPDATE pair_config SET inr_amount=300.0 WHERE inr_amount IS NULL")
+    if "auto_enabled" not in cols:
+        c.execute("ALTER TABLE pair_config ADD COLUMN auto_enabled INTEGER DEFAULT 0")
+        c.execute("UPDATE pair_config SET auto_enabled=0 WHERE auto_enabled IS NULL")
     
     # Add new strategy metric columns to trades table
     trade_cols = {row[1] for row in c.execute("PRAGMA table_info(trades)").fetchall()}
@@ -324,6 +327,31 @@ def update_pair_enabled(pair: str, enabled: int):
     """, (pair, enabled))
     conn.commit()
     conn.close()
+
+
+def update_pair_auto_status(pair: str, enabled: int, auto_enabled: int):
+    """Update pair enabled and auto_enabled (used by batch confidence checker)."""
+    conn = get_conn()
+    conn.execute("""
+        UPDATE pair_config SET enabled=?, auto_enabled=?, updated_at=datetime('now') WHERE pair=?
+    """, (enabled, auto_enabled, pair))
+    if conn.total_changes == 0:
+        conn.execute("""
+            INSERT INTO pair_config (pair, enabled, auto_enabled, leverage, quantity, inr_amount, updated_at)
+            VALUES (?, ?, ?, 5, 0.001, 300.0, datetime('now'))
+        """, (pair, enabled, auto_enabled))
+    conn.commit()
+    conn.close()
+
+
+def get_auto_enabled_pairs():
+    """Get pairs that are enabled AND were auto-enabled (for re-evaluation)."""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM pair_config WHERE enabled=1 AND auto_enabled=1 ORDER BY pair ASC"
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
 # ── Trading mode ────────────────────────────

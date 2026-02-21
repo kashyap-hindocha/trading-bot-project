@@ -104,6 +104,10 @@ header {
   50%       { opacity: 0.3; }
 }
 
+.batch-dot.pulse {
+  animation: pulse 2s infinite;
+}
+
 .last-update { color: var(--muted); font-size: 11px; }
 
 /* ── BUTTONS ── */

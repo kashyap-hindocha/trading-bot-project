@@ -179,8 +179,8 @@ async function loadPairSignals() {
             renderFavorites();
         }
 
-        if (typeof renderPairManager === 'function') {
-            renderPairManager();
+        if (typeof refreshBatchUI === 'function') {
+            refreshBatchUI();
         }
         
         console.debug(`Pair signals loaded in ${fetchTime}s, scheduling next call in 7s`);
