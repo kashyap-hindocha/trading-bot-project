@@ -179,10 +179,10 @@ async function loadPairSignals() {
             renderFavorites();
         }
 
-        if (typeof renderPairManager === 'function') {
-            renderPairManager();
-        }
-        
+        // Do NOT call renderPairManager here — it would wipe the Pair Manager's
+        // scanned signal meters. Pair Manager has its own data (loadAvailablePairs)
+        // and scanner (scanVisibleSignals).
+
         console.debug(`Pair signals loaded in ${fetchTime}s, scheduling next call in 7s`);
     } catch (err) {
         console.error('Failed to load pair signals:', err);

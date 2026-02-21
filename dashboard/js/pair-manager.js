@@ -9,6 +9,8 @@ let searchFilter = '';
 let currentPrices = {};  // Store current prices for dynamic quantity calculation
 let pairPage = 1;
 const PAIRS_PER_PAGE = 10;
+// Cache for Pair Manager signal meters; populated by scanVisibleSignals, used by renderPairManager
+let pairManagerSignalCache = {};
 
 // Calculate quantity based on INR amount, leverage, and current price
 function calculateQuantity(inrAmount, leverage, currentPrice) {
@@ -182,6 +184,12 @@ function renderPairManager() {
             ? `Calculated: (${cfg.inr_amount} × ${cfg.leverage}) ÷ ${currentPrice.toFixed(2)} = ${calculatedQty}`
             : 'Waiting for live price to calculate quantity';
         const priceDisplay = currentPrice > 0 ? `₹${currentPrice.toLocaleString()}` : 'Syncing...';
+
+        // Use cached signal if available (persists across renderPairManager re-renders)
+        const cached = pairManagerSignalCache[pair.pair];
+        const signalMeterHtml = cached
+            ? `<div>Signal: ${cached.pct.toFixed(1)}%</div><div style="margin-top: 2px; height: 3px; background: var(--gray-3); border-radius: 2px; overflow: hidden;"><div style="height: 100%; width: ${cached.pct}%; background: ${cached.color}; transition: width 0.3s;"></div></div>`
+            : 'Signal: —';
         
         return `
             <div class="pair-manager-row" data-pair="${pair.pair}" 
@@ -251,7 +259,7 @@ function renderPairManager() {
                     </div>
                     <div class="signal-meter" data-signal="${pair.pair}"
                          style="margin-top: 4px; font-size: 10px; color: var(--gray-2);">
-                        Signal: —
+                        ${signalMeterHtml}
                     </div>
                 </div>
             </div>
@@ -574,9 +582,6 @@ async function scanVisibleSignals() {
 
         data.forEach(item => {
             if (!item || !item.pair) return;
-            const meter = container.querySelector(`.signal-meter[data-signal="${item.pair}"]`);
-            if (!meter) return;
-
             const readiness = Number(item.readiness || 0);
             const pct = Math.min(100, Math.max(0, readiness));
             let color = 'var(--accent)';
@@ -586,12 +591,18 @@ async function scanVisibleSignals() {
                 color = 'var(--yellow)';
             }
 
-            meter.innerHTML = `
-                <div>Signal: ${pct.toFixed(1)}%</div>
-                <div style="margin-top: 2px; height: 3px; background: var(--gray-3); border-radius: 2px; overflow: hidden;">
-                  <div style="height: 100%; width: ${pct}%; background: ${color}; transition: width 0.3s;"></div>
-                </div>
-            `;
+            // Cache so renderPairManager preserves signals on re-render
+            pairManagerSignalCache[item.pair] = { pct, color };
+
+            const meter = container.querySelector(`.signal-meter[data-signal="${item.pair}"]`);
+            if (meter) {
+                meter.innerHTML = `
+                    <div>Signal: ${pct.toFixed(1)}%</div>
+                    <div style="margin-top: 2px; height: 3px; background: var(--gray-3); border-radius: 2px; overflow: hidden;">
+                      <div style="height: 100%; width: ${pct}%; background: ${color}; transition: width 0.3s;"></div>
+                    </div>
+                `;
+            }
         });
     } catch (err) {
         console.error('Failed to scan visible signals:', err);
