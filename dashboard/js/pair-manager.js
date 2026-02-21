@@ -9,8 +9,6 @@ let searchFilter = '';
 let currentPrices = {};  // Store current prices for dynamic quantity calculation
 let pairPage = 1;
 const PAIRS_PER_PAGE = 10;
-// Store last scanned signals for persistence across renders
-let lastScannedSignals = {};
 
 // Calculate quantity based on INR amount, leverage, and current price
 function calculateQuantity(inrAmount, leverage, currentPrice) {
@@ -261,8 +259,6 @@ function renderPairManager() {
     }).join('');
     
     updatePairManagerSummary();
-    // After rendering, re-apply last scanned signals if available
-    applyLastScannedSignals();
 }
 
 // Toggle pair enabled/disabled
@@ -576,11 +572,8 @@ async function scanVisibleSignals() {
         const data = await resp.json();
         if (!Array.isArray(data)) return;
 
-        // Persist last scanned signals
-        lastScannedSignals = {};
         data.forEach(item => {
             if (!item || !item.pair) return;
-            lastScannedSignals[item.pair] = Number(item.readiness || 0);
             const meter = container.querySelector(`.signal-meter[data-signal="${item.pair}"]`);
             if (!meter) return;
 
@@ -615,28 +608,4 @@ async function scanVisibleSignals() {
         if (prevBtn) prevBtn.disabled = false;
         if (nextBtn) nextBtn.disabled = false;
     }
-}
-
-// Apply last scanned signals to the UI after render
-function applyLastScannedSignals() {
-    if (!lastScannedSignals || Object.keys(lastScannedSignals).length === 0) return;
-    const container = document.getElementById('pairManagerList');
-    if (!container) return;
-    Object.entries(lastScannedSignals).forEach(([pair, readiness]) => {
-        const meter = container.querySelector(`.signal-meter[data-signal="${pair}"]`);
-        if (!meter) return;
-        const pct = Math.min(100, Math.max(0, readiness));
-        let color = 'var(--accent)';
-        if (pct >= 80) {
-            color = 'var(--green)';
-        } else if (pct >= 60) {
-            color = 'var(--yellow)';
-        }
-        meter.innerHTML = `
-            <div>Signal: ${pct.toFixed(1)}%</div>
-            <div style="margin-top: 2px; height: 3px; background: var(--gray-3); border-radius: 2px; overflow: hidden;">
-              <div style="height: 100%; width: ${pct}%; background: ${color}; transition: width 0.3s;"></div>
-            </div>
-        `;
-    });
 }
