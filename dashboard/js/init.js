@@ -37,11 +37,9 @@ document.addEventListener('DOMContentLoaded', async function () {
   setInterval(updatePriceChart, REFRESH_MS * 2);
   setInterval(updateCandleChart, 10000); // Refresh candlesticks every 10s
   
-  // Refresh batch status and auto-enabled pairs every 30 seconds
-  setInterval(async () => {
-    if (typeof refreshBatchUI === 'function') {
-      await refreshBatchUI();
-    }
-  }, 30000);
+  // Batch status self-schedules: every 2s during processing, 30s when idle
+  if (typeof loadBatchStatus === 'function') {
+    loadBatchStatus();
+  }
 });
 

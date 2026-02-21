@@ -1,9 +1,12 @@
 /* ════════════════════════════════════════════════════════════════
    BATCH CONFIDENCE CHECKER UI
-   Auto-enabled pairs, batch status, countdown timer
+   Live batch display during processing + countdown during wait
    ════════════════════════════════════════════════════════════════ */
 
 let batchCountdownInterval = null;
+let batchPollHandle = null;
+const BATCH_POLL_MS = 2000;   // Poll every 2s during processing for live updates
+const BATCH_IDLE_POLL_MS = 30000;  // Poll every 30s when idle
 
 async function loadBatchStatus() {
   try {
@@ -13,23 +16,38 @@ async function loadBatchStatus() {
       throw new Error(data.error || 'Failed to load batch status');
     }
     renderBatchStatus(data);
+
+    // Poll more frequently during processing for live batch updates
+    if (batchPollHandle) clearTimeout(batchPollHandle);
+    if (data.is_processing) {
+      batchPollHandle = setTimeout(loadBatchStatus, BATCH_POLL_MS);
+    } else {
+      batchPollHandle = setTimeout(loadBatchStatus, BATCH_IDLE_POLL_MS);
+    }
   } catch (e) {
     console.error('Batch status load failed:', e);
-    document.getElementById('batchStatusText').textContent = 'Offline';
-    document.getElementById('batchCurrentPairs').textContent = '—';
-    document.getElementById('batchCountdownVal').textContent = '—';
-    document.getElementById('autoEnabledPanel').innerHTML =
-      '<div style="color: var(--gray-2); font-size: 12px;">Unable to load status</div>';
+    const liveEl = document.getElementById('batchLiveDisplay');
+    const idleEl = document.getElementById('batchIdleDisplay');
+    if (liveEl) liveEl.style.display = 'none';
+    if (idleEl) idleEl.style.display = 'flex';
+    const txt = document.getElementById('batchIdleText');
+    const countdownVal = document.getElementById('batchCountdownVal');
+    if (txt) txt.textContent = 'Offline';
+    if (countdownVal) countdownVal.textContent = '—';
+    if (batchPollHandle) clearTimeout(batchPollHandle);
+    batchPollHandle = setTimeout(loadBatchStatus, BATCH_IDLE_POLL_MS);
   }
 }
 
 function renderBatchStatus(data) {
-  const dot = document.getElementById('batchStatusDot');
-  const text = document.getElementById('batchStatusText');
+  const liveDisplay = document.getElementById('batchLiveDisplay');
+  const idleDisplay = document.getElementById('batchIdleDisplay');
   const currentPairs = document.getElementById('batchCurrentPairs');
   const countdownVal = document.getElementById('batchCountdownVal');
+  const idleDot = document.getElementById('batchIdleDot');
+  const idleText = document.getElementById('batchIdleText');
 
-  if (!dot || !text) return;
+  if (!liveDisplay || !idleDisplay) return;
 
   const isProcessing = data.is_processing || false;
   const currentBatch = data.current_batch || [];
@@ -37,31 +55,37 @@ function renderBatchStatus(data) {
   const lastError = data.last_error;
 
   if (lastError) {
-    dot.style.background = 'var(--red)';
-    text.textContent = 'Error';
-    countdownVal.textContent = '—';
-  } else if (isProcessing) {
-    dot.style.background = 'var(--accent)';
-    dot.classList.add('pulse');
-    text.textContent = 'Processing...';
+    liveDisplay.style.display = 'none';
+    idleDisplay.style.display = 'flex';
+    if (idleDot) idleDot.style.background = 'var(--red)';
+    if (idleText) idleText.textContent = 'Error';
+    if (countdownVal) countdownVal.textContent = '—';
+    return;
+  }
+
+  if (isProcessing) {
+    liveDisplay.style.display = 'block';
+    idleDisplay.style.display = 'none';
+
     if (currentBatch.length > 0) {
       const labels = currentBatch.map(p => p.replace('B-', '').replace('_USDT', ''));
-      currentPairs.textContent = `Evaluating: ${labels.join(', ')}`;
+      currentPairs.textContent = labels.join(', ');
     } else {
       currentPairs.textContent = '—';
     }
-    // Countdown only starts after full cycle; during processing show placeholder
-    countdownVal.textContent = '—';
   } else {
-    dot.style.background = 'var(--green)';
-    dot.classList.remove('pulse');
-    text.textContent = 'Idle';
-    currentPairs.textContent = '—';
+    liveDisplay.style.display = 'none';
+    idleDisplay.style.display = 'flex';
+
+    if (idleDot) {
+      idleDot.style.background = 'var(--green)';
+      idleDot.classList.remove('pulse');
+    }
+    if (idleText) idleText.textContent = 'Idle';
     const sec = Math.max(0, typeof secondsUntil === 'number' ? secondsUntil : (data.seconds_until_next ?? 600));
-    countdownVal.textContent = formatCountdown(sec);
+    if (countdownVal) countdownVal.textContent = formatCountdown(sec);
   }
 
-  // Start countdown ticker if not already running
   if (!batchCountdownInterval) {
     batchCountdownInterval = setInterval(tickBatchCountdown, 1000);
   }
@@ -74,6 +98,9 @@ function formatCountdown(seconds) {
 }
 
 function tickBatchCountdown() {
+  const liveDisplay = document.getElementById('batchLiveDisplay');
+  if (liveDisplay && liveDisplay.style.display !== 'none') return;
+
   const el = document.getElementById('batchCountdownVal');
   if (!el) return;
   const txt = el.textContent;
@@ -87,55 +114,12 @@ function tickBatchCountdown() {
     m--;
     s = 59;
   } else {
-    loadBatchStatus(); // Refresh to get new countdown
+    loadBatchStatus();
     return;
   }
   el.textContent = formatCountdown(m * 60 + s);
 }
 
-async function loadAutoEnabledPairs() {
-  try {
-    const res = await fetch(API + '/api/batch/auto-enabled');
-    const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data.error || 'Failed');
-    }
-    renderAutoEnabledPanel(Array.isArray(data) ? data : []);
-  } catch (e) {
-    console.error('Auto-enabled pairs load failed:', e);
-    document.getElementById('autoEnabledPanel').innerHTML =
-      '<div style="color: var(--gray-2); font-size: 12px;">Unable to load</div>';
-  }
-}
-
-function renderAutoEnabledPanel(pairs) {
-  const panel = document.getElementById('autoEnabledPanel');
-  if (!panel) return;
-
-  if (!pairs || pairs.length === 0) {
-    panel.innerHTML =
-      '<div style="color: var(--gray-2); font-size: 12px; padding: 10px;">No pairs auto-enabled yet</div>';
-    return;
-  }
-
-  panel.innerHTML = pairs.map(p => {
-    const baseCoin = p.pair.replace('B-', '').replace('_USDT', '');
-    const readiness = Math.min(100, Math.max(0, p.readiness || 0));
-    const bias = p.bias || '—';
-    const barColor = readiness >= 75 ? 'var(--green)' : readiness >= 50 ? 'var(--accent)' : 'var(--yellow)';
-    return `
-      <div class="auto-enabled-card" style="padding: 12px 16px; background: var(--gray-3); border: 1px solid var(--gray-2); border-radius: 6px; min-width: 140px;">
-        <div style="font-size: 13px; font-weight: 700; color: var(--accent); margin-bottom: 6px;">${baseCoin}</div>
-        <div style="font-size: 11px; color: var(--gray-1); margin-bottom: 4px;">Confidence: ${readiness.toFixed(1)}% · ${bias}</div>
-        <div style="height: 6px; background: var(--gray-2); border-radius: 3px; overflow: hidden;">
-          <div style="height: 100%; width: ${readiness}%; background: ${barColor}; transition: width 0.3s;"></div>
-        </div>
-      </div>
-    `;
-  }).join('');
-}
-
 async function refreshBatchUI() {
   await loadBatchStatus();
-  await loadAutoEnabledPairs();
 }

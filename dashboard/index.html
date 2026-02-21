@@ -122,7 +122,7 @@
       <div class="panel-title">
         📊 Trading Pairs
         <div class="panel-tools" style="font-size: 11px; color: var(--gray-2);">
-          Sorted by signal strength (top 10)
+          Only currently auto-enabled pairs (≥75% confidence) · Sorted by signal strength
         </div>
       </div>
       <div id="pairSignalsContainer" style="display: flex; gap: 10px; flex-wrap: wrap;">
@@ -207,7 +207,7 @@
     </div>
 
 
-    <!-- Auto-Enabled Pairs & Batch Status Section -->
+    <!-- Confidence Check (Background) — Live batch display + countdown only -->
     <div class="batch-status-section" style="margin: 20px 0;">
       <div class="panel-title">
         🔄 Confidence Check (Background)
@@ -217,24 +217,26 @@
       </div>
       
       <div class="chart-panel" style="padding: 20px;">
-        <!-- Batch Status Bar -->
-        <div id="batchStatusBar" style="display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; padding: 12px; background: var(--gray-3); border-radius: 6px; font-size: 12px;">
+        <!-- During active cycle: live batch processing display with animation -->
+        <div id="batchLiveDisplay" style="display: none; margin-bottom: 12px; padding: 16px; background: var(--gray-3); border: 1px solid var(--accent); border-radius: 6px;">
+          <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+            <span id="batchStatusDot" class="batch-dot pulse" style="width: 12px; height: 12px; border-radius: 50%; background: var(--accent);"></span>
+            <span id="batchStatusText" style="font-weight: 700; color: var(--accent);">Processing...</span>
+            <span id="batchCurrentPairs" style="color: var(--text); font-size: 13px; font-weight: 600;">
+              —
+            </span>
+          </div>
+          <div style="font-size: 11px; color: var(--gray-1); margin-top: 8px;">Evaluating these 5 pairs — updates as each batch completes</div>
+        </div>
+        <!-- During 10-min wait: idle + countdown -->
+        <div id="batchIdleDisplay" style="display: flex; align-items: center; gap: 16px; flex-wrap: wrap;">
           <div style="display: flex; align-items: center; gap: 8px;">
-            <span id="batchStatusDot" class="batch-dot" style="width: 10px; height: 10px; border-radius: 50%; background: var(--gray-2);"></span>
-            <span id="batchStatusText">Checking...</span>
+            <span id="batchIdleDot" class="batch-dot" style="width: 10px; height: 10px; border-radius: 50%; background: var(--gray-2);"></span>
+            <span id="batchIdleText" style="font-size: 12px;">Checking...</span>
           </div>
-          <div id="batchCurrentPairs" style="color: var(--accent); font-size: 11px;">
-            —
-          </div>
-          <div id="batchCountdown" style="color: var(--gray-1);">
+          <div id="batchCountdown" style="color: var(--gray-1); font-size: 12px;">
             Next cycle in: <span id="batchCountdownVal">—</span>
           </div>
-        </div>
-
-        <!-- Auto-Enabled Pairs Review Panel -->
-        <div class="panel-title" style="font-size: 12px; margin-bottom: 12px;">Auto-Enabled Pairs (Confidence &gt;75%)</div>
-        <div id="autoEnabledPanel" style="display: flex; gap: 10px; flex-wrap: wrap; min-height: 60px;">
-          <div style="color: var(--gray-2); font-size: 12px; padding: 10px;">Loading...</div>
         </div>
       </div>
     </div>
