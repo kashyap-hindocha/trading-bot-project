@@ -14,32 +14,30 @@ function renderMode() {
 // Batch mode: "auto" = cycle all 3 strategies every 5 min; else use selected strategy only
 async function loadStrategies() {
   const select = document.getElementById('strategySelect');
+  if (!select) return;
 
   try {
-    const response = await fetch('/api/strategies');
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-
+    const response = await fetch((typeof API !== 'undefined' ? API : '') + '/api/strategies');
+    if (!response.ok) throw new Error('HTTP ' + response.status);
     const data = await response.json();
 
-    if (data.strategies && Array.isArray(data.strategies) && data.strategies.length > 0) {
-      const batchMode = data.batch_mode || data.active || 'enhanced_v2';
-      select.innerHTML =
-        '<option value="auto">Auto (cycle all 3)</option>' +
-        data.strategies.map(s =>
-          `<option value="${s.name}">${s.displayName || s.name}</option>`
-        ).join('');
+    // Always include "Auto (cycle all 3)" as the first option
+    const strategies = (data.strategies && Array.isArray(data.strategies)) ? data.strategies : [];
+    const batchMode = (data.batch_mode || data.active || 'enhanced_v2').toLowerCase();
+    const options = ['<option value="auto">Auto (cycle all 3)</option>'];
+    strategies.forEach(function (s) {
+      const name = s.name || '';
+      const label = (s.displayName || s.display_name || s.name || name).trim() || name;
+      if (name) options.push('<option value="' + name + '">' + label + '</option>');
+    });
+    select.innerHTML = options.length > 1 ? options.join('') : '<option value="auto">Auto (cycle all 3)</option><option value="enhanced_v2">Enhanced v2</option><option value="bollinger_rsi">Bollinger RSI</option><option value="breakout_vol">Breakout Vol</option>';
 
-      select.value = batchMode === 'auto' ? 'auto' : (data.active || data.strategies[0].name);
-    } else {
-      select.innerHTML = '<option value="">No strategies</option>';
-    }
+    select.value = (batchMode === 'auto' ? 'auto' : (data.active || (strategies[0] && strategies[0].name) || 'enhanced_v2'));
     select.disabled = false;
   } catch (error) {
-    select.innerHTML = '<option value="">Strategies unavailable</option>';
-    select.disabled = true;
+    select.innerHTML = '<option value="auto">Auto (cycle all 3)</option><option value="enhanced_v2">Enhanced v2</option><option value="bollinger_rsi">Bollinger RSI</option><option value="breakout_vol">Breakout Vol</option>';
+    select.value = 'auto';
+    select.disabled = false;
     console.error('Strategy load failed:', error);
   }
 }
@@ -51,7 +49,7 @@ async function changeStrategy() {
   if (!strategyName) return;
 
   try {
-    const response = await fetch('/api/strategies', {
+    const response = await fetch((typeof API !== 'undefined' ? API : '') + '/api/strategies', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ strategy: strategyName })

@@ -532,17 +532,17 @@ def trading_mode():
 def strategies():
     if request.method == "GET":
         try:
+            batch_mode = db.get_batch_strategy_mode() or "enhanced_v2"
             if not STRATEGY_MANAGER_LOADED:
                 return jsonify({
                     "strategies": [],
                     "active": None,
+                    "batch_mode": batch_mode,
                     "error": "Strategy manager not loaded"
                 }), 500
-            
+
             available_strategies = strategy_manager.strategy_manager.get_available_strategies()
             active_strategy = strategy_manager.strategy_manager.get_active_strategy_name()
-            
-            batch_mode = db.get_batch_strategy_mode() or "enhanced_v2"
             result = {
                 "strategies": [{"name": s["name"], "displayName": s.get("display_name", s["name"]), "description": s["description"]} for s in available_strategies],
                 "active": active_strategy,
@@ -550,9 +550,14 @@ def strategies():
             }
             return jsonify(result)
         except Exception as e:
+            try:
+                batch_mode = db.get_batch_strategy_mode() or "enhanced_v2"
+            except Exception:
+                batch_mode = "enhanced_v2"
             return jsonify({
                 "strategies": [],
                 "active": None,
+                "batch_mode": batch_mode,
                 "error": str(e)
             }), 500
 

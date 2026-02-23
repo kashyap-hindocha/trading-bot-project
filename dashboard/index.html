@@ -203,10 +203,11 @@
             <span id="batchStatusText" style="font-weight: 700; color: var(--accent);">Processing...</span>
             <span id="batchProgressText" style="color: var(--text); font-size: 13px; font-weight: 600;">Batch 1 of 1</span>
           </div>
+          <div id="batchCurrentStrategyRow" style="margin-top: 8px; font-size: 12px; color: var(--gray-1);"><strong style="color: var(--accent);">Strategy being checked:</strong> <span id="batchCurrentStrategyName">—</span></div>
           <div id="batchPairsWithConfidence" style="margin-top: 12px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center;">
             <!-- Filled by JS: pair name + confidence % for current 5 pairs -->
           </div>
-          <div style="font-size: 11px; color: var(--gray-1); margin-top: 8px;">Checking all pairs in batches of 5 — pairs &gt;75% are auto-enabled for trading</div>
+          <div style="font-size: 11px; color: var(--gray-1); margin-top: 8px;">Checking all pairs in batches of 5. In <strong>Auto</strong> mode all 3 strategies are run one by one; otherwise only the selected strategy is used. Pairs &gt;75% are auto-enabled for trading.</div>
         </div>
         <!-- During 5-min wait: idle + countdown -->
         <div id="batchIdleDisplay" style="display: flex; align-items: center; gap: 16px; flex-wrap: wrap;">

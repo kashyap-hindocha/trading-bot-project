@@ -78,11 +78,16 @@ function renderBatchStatus(data) {
     liveDisplay.style.display = 'block';
     idleDisplay.style.display = 'none';
 
+    var currentStrategyKey = data.current_strategy || data.batch_strategy_mode || '';
+    var strategyDisplayName = currentStrategyKey ? (currentStrategyKey === 'auto' ? 'Auto (cycling all 3)' : currentStrategyKey.replace(/_/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); })) : '—';
+    var strategyNameEl = document.getElementById('batchCurrentStrategyName');
+    var strategyRowEl = document.getElementById('batchCurrentStrategyRow');
+    if (strategyNameEl) strategyNameEl.textContent = strategyDisplayName;
+    if (strategyRowEl) strategyRowEl.style.display = currentStrategyKey ? 'block' : 'none';
+
     if (progressText) {
-      const currentStrategy = data.current_strategy || data.batch_strategy_mode || '';
-      const strategyLabel = currentStrategy ? (currentStrategy === 'auto' ? 'Auto' : currentStrategy.replace(/_/g, ' ')) : '';
       progressText.textContent = totalBatches > 0
-        ? (strategyLabel ? `Strategy: ${strategyLabel} · ` : '') + `Batch ${batchIndex} of ${totalBatches} (${totalPairs} pairs)`
+        ? (strategyDisplayName !== '—' ? strategyDisplayName + ' · ' : '') + 'Batch ' + batchIndex + ' of ' + totalBatches + ' (' + totalPairs + ' pairs)'
         : 'Processing...';
     }
 
@@ -108,6 +113,8 @@ function renderBatchStatus(data) {
   } else {
     liveDisplay.style.display = 'none';
     idleDisplay.style.display = 'flex';
+    var strategyRowElIdle = document.getElementById('batchCurrentStrategyRow');
+    if (strategyRowElIdle) strategyRowElIdle.style.display = 'none';
 
     if (idleDot) {
       idleDot.style.background = 'var(--green)';
@@ -195,7 +202,7 @@ function renderConfidenceHistory(data) {
       const label = formatPairLabel(pair);
       const confidence = r.readiness != null ? Number(r.readiness).toFixed(1) : '—';
       const strategyName = r.strategy_name || r.strategy_key || '—';
-      const strategyDisplay = strategyName !== '—' ? strategyName.replace(/_/g, ' ') : '—';
+      const strategyDisplay = strategyName !== '—' ? strategyName.replace(/_/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); }) : '—';
       const bias = r.bias || '—';
       const rsi = r.rsi != null ? Number(r.rsi).toFixed(1) : '—';
       const checkedAt = r.checked_at ? (r.checked_at.replace('T', ' ').slice(0, 19)) : '—';
