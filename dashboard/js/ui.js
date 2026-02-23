@@ -11,6 +11,7 @@ function renderMode() {
 }
 
 // ── Strategy Management ──
+// Batch mode: "auto" = cycle all 3 strategies every 5 min; else use selected strategy only
 async function loadStrategies() {
   const select = document.getElementById('strategySelect');
 
@@ -24,19 +25,19 @@ async function loadStrategies() {
     const data = await response.json();
 
     if (data.strategies && Array.isArray(data.strategies) && data.strategies.length > 0) {
-      select.innerHTML = data.strategies.map(s =>
-        `<option value="${s.name}">${s.displayName || s.name}</option>`
-      ).join('');
+      const batchMode = data.batch_mode || data.active || 'enhanced_v2';
+      select.innerHTML =
+        '<option value="auto">Auto (cycle all 3)</option>' +
+        data.strategies.map(s =>
+          `<option value="${s.name}">${s.displayName || s.name}</option>`
+        ).join('');
 
-      if (data.active) {
-        select.value = data.active;
-      }
+      select.value = batchMode === 'auto' ? 'auto' : (data.active || data.strategies[0].name);
     } else {
       select.innerHTML = '<option value="">No strategies</option>';
     }
     select.disabled = false;
   } catch (error) {
-    // Fallback: show status message
     select.innerHTML = '<option value="">Strategies unavailable</option>';
     select.disabled = true;
     console.error('Strategy load failed:', error);

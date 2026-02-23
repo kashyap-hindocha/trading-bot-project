@@ -221,13 +221,17 @@ function renderPairList() {
 
         const baseCoin = p.pair.replace('B-', '').replace('_USDT', '');
         const signalPct = Math.min(100, Math.max(0, p.signal_strength || 0));
+        const byStrategy = p.enabled_by_strategy;
+        const atConf = p.enabled_at_confidence != null ? Number(p.enabled_at_confidence).toFixed(1) : null;
+        const strategyDisplay = byStrategy ? byStrategy.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : '';
+        const enabledByLine = (byStrategy && atConf) ? `<div style="font-size: 10px; color: var(--gray-2); margin-top: 6px;">Enabled by: ${strategyDisplay} at ${atConf}%</div>` : '';
 
         card.innerHTML = `
       <div style="font-size: 13px; font-weight: 700; color: var(--accent); margin-bottom: 6px;">${baseCoin}</div>
       <div style="font-size: 11px; color: var(--gray-1); margin-bottom: 4px;">Signal: ${signalPct}%</div>
       <div style="height: 4px; background: var(--gray-2); border-radius: 2px; overflow: hidden;">
         <div style="height: 100%; width: ${signalPct}%; background: var(--accent); transition: width 0.3s;"></div>
-      </div>
+      </div>${enabledByLine}
     `;
 
         card.onmouseenter = () => {
@@ -284,12 +288,16 @@ function renderPairList() {
             `;
             const baseCoin = p.pair.replace('B-', '').replace('_USDT', '');
             const signalPct = Math.min(100, Math.max(0, p.signal_strength || 0));
+            const byStrategy = p.enabled_by_strategy;
+            const atConf = p.enabled_at_confidence != null ? Number(p.enabled_at_confidence).toFixed(1) : null;
+            const strategyDisplay = byStrategy ? byStrategy.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : '';
+            const enabledByLine = (byStrategy && atConf) ? `<div style="font-size: 10px; color: var(--gray-2); margin-top: 6px;">Enabled by: ${strategyDisplay} at ${atConf}%</div>` : '';
             card.innerHTML = `
               <div style="font-size: 13px; font-weight: 700; color: var(--accent); margin-bottom: 6px;">${baseCoin}</div>
               <div style="font-size: 11px; color: var(--gray-1); margin-bottom: 4px;">Signal: ${signalPct.toFixed(1)}%</div>
               <div style="height: 4px; background: var(--gray-2); border-radius: 2px; overflow: hidden;">
                 <div style="height: 100%; width: ${signalPct}%; background: var(--accent); transition: width 0.3s;"></div>
-              </div>
+              </div>${enabledByLine}
             `;
             card.onmouseenter = () => { card.style.borderColor = 'var(--accent)'; card.style.transform = 'translateY(-2px)'; };
             card.onmouseleave = () => { card.style.borderColor = 'var(--gray-2)'; card.style.transform = 'translateY(0)'; };

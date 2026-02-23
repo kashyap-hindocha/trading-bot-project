@@ -1,17 +1,27 @@
 """
-Enhanced Strategy v2
-====================
-Advanced trading strategy with:
-  - Volatility-adjusted position sizing (ATR)
-  - Multi-timeframe confirmation
-  - Dynamic trailing stops
-  - MACD & Volume confirmation
-  - Relaxed RSI with additional confirmations
+Enhanced Strategy v2 — Supertrend + Triple EMA + MACD Trend Follower
+=====================================================================
+Professional trend-following strategy rebuilt with:
+  - Supertrend (ATR-based dynamic trend line) as the PRIMARY signal
+  - Triple EMA (9 / 21 / 50) for trend strength, crossover, and major-trend filter
+  - MACD (12, 26, 9) momentum confirmation
+  - Volume confirmation (≥ 80 % of 20-period MA)
+  - Wilder-smoothed ATR for position sizing and trailing-stop reference
+
+Signal logic:
+  LONG  — Supertrend bullish AND EMA 9 > EMA 21 AND (ST just flipped OR EMA crossed up)
+            AND MACD ≥ signal AND volume OK
+  SHORT — Supertrend bearish AND EMA 9 < EMA 21 AND (ST just flipped OR EMA crossed down)
+            AND MACD ≤ signal AND volume OK
+
+TP : 15 % price move  (at 5x leverage → ≈ 75 % account gain)
+SL : 10 % price move  (at 5x leverage → ≈ 50 % account loss)
+Risk : Reward = 1 : 1.5
+Confidence threshold : 80 %
 """
 
 import logging
-import statistics
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Union
 from strategy_base import TradingStrategy
 
 logger = logging.getLogger(__name__)
@@ -19,522 +29,416 @@ logger = logging.getLogger(__name__)
 
 class EnhancedStrategyV2(TradingStrategy):
     """
-    Enhanced trading strategy with advanced indicators and risk management.
+    Supertrend + Triple EMA Trend Follower.
+    Fires on every CLOSED candle via the WebSocket candlestick stream.
     """
 
     CONFIG = {
-        "pair":          "B-BTC_USDT",      # Trading pair
-        "interval":      "5m",              # Candle interval
-        "leverage":      5,                 # Leverage (1 = no leverage)
-        "quantity":      0.001,             # Base order size in base currency (BTC)
-        "inr_amount":    300.0,             # Margin budget per trade in INR
-        "tp_pct":        0.015,             # Take profit %  (1.5%)
-        "sl_pct":        0.008,             # Stop loss %    (0.8%)
-        "max_open_trades": 5,               # Max simultaneous open positions
-        "auto_execute":  True,              # Auto-execute trades above confidence threshold
-        "confidence_threshold": 75.0,       # Confidence threshold for auto-execute (lowered from 90%)
+        "pair":               "B-BTC_USDT",
+        "interval":           "5m",
+        "leverage":           5,
+        "quantity":           0.001,
+        "inr_amount":         300.0,
+        "tp_pct":             0.15,          # ── TP: 15 % price move ──
+        "sl_pct":             0.10,          # ── SL: 10 % price move ──
+        "max_open_trades":    3,
+        "auto_execute":       True,
+        "confidence_threshold": 80.0,
 
-        # ── EMA & Trend Indicators ──────
-        "ema_fast":      9,
-        "ema_slow":      21,
+        # ── EMA ───────────────────────────────────────────────────────
+        "ema_fast":           9,
+        "ema_slow":           21,
+        "ema_trend":          50,            # Higher-timeframe trend filter
 
-        # ── RSI (Relaxed Settings) ──────
-        "rsi_period":    14,
-        "rsi_overbought": 75,              # Relaxed from 70 (allows strong trends)
-        "rsi_oversold":   25,              # Relaxed from 30
+        # ── RSI ───────────────────────────────────────────────────────
+        "rsi_period":         14,
+        "rsi_overbought":     70,
+        "rsi_oversold":       30,
 
-        # ── ATR (Volatility) ──────
-        "atr_period":    14,
-        "atr_multiplier": 1.5,             # Trailing stop: Close +/- ATR*multiplier
+        # ── ATR ───────────────────────────────────────────────────────
+        "atr_period":         14,
+        "atr_multiplier":     2.0,           # Trailing-stop reference only
 
-        # ── MACD ──────
-        "macd_fast":     12,
-        "macd_slow":     26,
-        "macd_signal":   9,
+        # ── Supertrend ────────────────────────────────────────────────
+        "st_period":          10,
+        "st_multiplier":      3.0,
 
-        # ── Volume ──────
-        "volume_ma_period": 20,            # Volume moving average period
-        "min_volume_ratio": 0.8,           # Min volume as % of MA (0.8 = 80%)
+        # ── MACD ──────────────────────────────────────────────────────
+        "macd_fast":          12,
+        "macd_slow":          26,
+        "macd_signal":        9,
 
-        # ── Position Sizing ──────
-        "volatility_adjusted": True,       # Use ATR for position sizing
-        "min_position_size": 0.0005,       # Minimum BTC to trade
-        "max_position_size": 0.01,         # Maximum BTC to trade
+        # ── Volume ────────────────────────────────────────────────────
+        "volume_ma_period":   20,
+        "min_volume_ratio":   0.8,
+
+        # ── Position sizing ───────────────────────────────────────────
+        "volatility_adjusted": True,
+        "min_position_size":  0.0005,
+        "max_position_size":  0.01,
     }
 
+    # ──────────────────────────────────────────────────────────────────
     def get_name(self) -> str:
         return "Enhanced v2"
 
     def get_description(self) -> str:
-        return ("Advanced strategy with ATR-based position sizing, MACD momentum, "
-                "volume confirmation, and dynamic trailing stops. Relaxed RSI allows "
-                "strong trending setups.")
+        return (
+            "Supertrend + Triple EMA (9/21/50) trend follower with MACD & volume confirmation. "
+            "Supertrend (10, 3) as primary signal; EMA crossover + EMA50 filter for trend "
+            "strength; MACD momentum; volume ≥ 80 %. "
+            "TP 15 % | SL 10 % | Confidence ≥ 80 %."
+        )
 
-    # ─────────────────────────────────────────────
-    #  Indicator helpers
-    # ─────────────────────────────────────────────
-    def _ema(self, values: list[float], period: int) -> list[float]:
-        """Calculate Exponential Moving Average"""
+    # ── Pure-Python indicator helpers ──────────────────────────────────
+
+    def _ema(self, values: list, period: int) -> list:
+        """Exponential Moving Average."""
         if len(values) < period:
             return []
         k = 2 / (period + 1)
-        ema = [sum(values[:period]) / period]
+        out = [sum(values[:period]) / period]
         for v in values[period:]:
-            ema.append(v * k + ema[-1] * (1 - k))
-        return ema
+            out.append(v * k + out[-1] * (1 - k))
+        return out
 
-    def _rsi(self, closes: list[float], period: int = 14) -> float:
-        """Calculate Relative Strength Index"""
+    def _rsi(self, closes: list, period: int = 14) -> float:
+        """Wilder RSI."""
         if len(closes) < period + 1:
             return 50.0
         deltas = [closes[i] - closes[i - 1] for i in range(1, len(closes))]
-        gains  = [d if d > 0 else 0 for d in deltas[-period:]]
-        losses = [-d if d < 0 else 0 for d in deltas[-period:]]
-        avg_gain = sum(gains) / period
-        avg_loss = sum(losses) / period
-        if avg_loss == 0:
-            return 100.0
-        rs = avg_gain / avg_loss
-        return round(100 - (100 / (1 + rs)), 2)
+        gains  = [d if d > 0 else 0.0 for d in deltas[-period:]]
+        losses = [-d if d < 0 else 0.0 for d in deltas[-period:]]
+        ag = sum(gains) / period
+        al = sum(losses) / period
+        return 100.0 if al == 0 else round(100 - 100 / (1 + ag / al), 2)
 
-    def _atr(self, candles: list[dict], period: int = 14) -> float:
-        """Calculate Average True Range for volatility"""
+    def _atr(self, candles: list, period: int = 14) -> float:
+        """Simple-average ATR (sufficient for position sizing)."""
         if len(candles) < period:
             return 0.0
+        tr = []
+        for i, c in enumerate(candles):
+            pc = candles[i - 1]["close"] if i > 0 else c["close"]
+            tr.append(max(c["high"] - c["low"],
+                          abs(c["high"] - pc),
+                          abs(c["low"]  - pc)))
+        return round(sum(tr[-period:]) / period, 6)
 
-        true_ranges = []
-        for i in range(len(candles)):
-            high = candles[i]["high"]
-            low = candles[i]["low"]
-            close_prev = candles[i-1]["close"] if i > 0 else candles[i]["close"]
-
-            tr = max(
-                high - low,
-                abs(high - close_prev),
-                abs(low - close_prev)
-            )
-            true_ranges.append(tr)
-
-        # Use SMA of true ranges
-        atr = sum(true_ranges[-period:]) / period
-        return round(atr, 4)
-
-    def _macd(self, closes: list[float]) -> dict:
-        """Calculate MACD (Moving Average Convergence Divergence)"""
-        fast_period = self.CONFIG["macd_fast"]
-        slow_period = self.CONFIG["macd_slow"]
-        signal_period = self.CONFIG["macd_signal"]
-
-        if len(closes) < slow_period + signal_period:
+    def _macd(self, closes: list) -> dict:
+        """Standard MACD."""
+        fp = self.CONFIG["macd_fast"]
+        sp = self.CONFIG["macd_slow"]
+        sg = self.CONFIG["macd_signal"]
+        if len(closes) < sp + sg:
             return {"macd": 0.0, "signal": 0.0, "histogram": 0.0}
+        ef = self._ema(closes, fp)
+        es = self._ema(closes, sp)
+        ml = [ef[i] - es[i] for i in range(len(es))]
+        sl = self._ema(ml, sg)
+        if not sl:
+            return {"macd": ml[-1] if ml else 0.0, "signal": 0.0, "histogram": 0.0}
+        m, s = ml[-1], sl[-1]
+        return {"macd": round(m, 8), "signal": round(s, 8), "histogram": round(m - s, 8)}
 
-        ema_fast = self._ema(closes, fast_period)
-        ema_slow = self._ema(closes, slow_period)
-
-        # Ensure both EMAs have enough data
-        min_len = min(len(ema_fast), len(ema_slow))
-        if min_len == 0:
-            return {"macd": 0.0, "signal": 0.0, "histogram": 0.0}
-
-        # MACD line = fast EMA - slow EMA
-        macd_line = [ema_fast[i] - ema_slow[i] for i in range(len(ema_slow))]
-
-        # Signal line = EMA of MACD
-        signal_line = self._ema(macd_line, signal_period)
-
-        if not signal_line:
-            return {"macd": macd_line[-1] if macd_line else 0.0, "signal": 0.0, "histogram": 0.0}
-
-        current_macd = macd_line[-1]
-        current_signal = signal_line[-1]
-        histogram = current_macd - current_signal
-
-        return {
-            "macd": round(current_macd, 4),
-            "signal": round(current_signal, 4),
-            "histogram": round(histogram, 4)
-        }
-
-    def _volume_ma(self, volumes: list[float], period: int = 20) -> float:
-        """Calculate Volume Moving Average"""
-        if len(volumes) < period:
-            return 0.0
-        return sum(volumes[-period:]) / period
-
-    def compute_indicators(self, candles: list[dict]) -> dict:
+    def _supertrend(self, candles: list, period: int = 10, multiplier: float = 3.0) -> list:
         """
-        Compute all indicators from candles.
-        Includes: EMA, RSI, ATR, MACD, Volume analysis
+        Supertrend with Wilder-smoothed ATR.
+        Returns list of {"value": float, "direction": int}
+          direction = 1  → bullish (price above the line)
+          direction = -1 → bearish (price below the line)
         """
+        n = len(candles)
+        if n < period + 1:
+            return []
+
+        highs  = [c["high"]  for c in candles]
+        lows   = [c["low"]   for c in candles]
         closes = [c["close"] for c in candles]
-        highs = [c["high"] for c in candles]
-        lows = [c["low"] for c in candles]
+
+        # Wilder's smoothed ATR
+        tr = []
+        for i in range(n):
+            pc = closes[i - 1] if i > 0 else closes[0]
+            tr.append(max(highs[i] - lows[i],
+                          abs(highs[i] - pc),
+                          abs(lows[i]  - pc)))
+        atr = [0.0] * n
+        atr[period - 1] = sum(tr[:period]) / period
+        for i in range(period, n):
+            atr[i] = (atr[i - 1] * (period - 1) + tr[i]) / period
+
+        fu = [0.0] * n   # final upper band
+        fl = [0.0] * n   # final lower band
+        st = [0.0] * n   # supertrend value
+        di = [1]   * n   # direction: 1=bull, -1=bear
+
+        for i in range(period - 1, n):
+            hl2 = (highs[i] + lows[i]) / 2.0
+            bu  = hl2 + multiplier * atr[i]
+            bl  = hl2 - multiplier * atr[i]
+
+            if i == period - 1:
+                fu[i], fl[i], di[i], st[i] = bu, bl, 1, bl
+                continue
+
+            # Band adjustment (prevents band from widening when price is trending)
+            fu[i] = bu if (bu < fu[i-1] or closes[i-1] > fu[i-1]) else fu[i-1]
+            fl[i] = bl if (bl > fl[i-1] or closes[i-1] < fl[i-1]) else fl[i-1]
+
+            # Direction flip logic
+            if st[i - 1] == fu[i - 1]:        # was bearish
+                di[i] = 1  if closes[i] > fu[i] else -1
+            else:                              # was bullish
+                di[i] = -1 if closes[i] < fl[i] else 1
+
+            st[i] = fl[i] if di[i] == 1 else fu[i]
+
+        return [{"value": round(st[i], 6), "direction": di[i]} for i in range(n)]
+
+    # ── Compute all indicators ──────────────────────────────────────────
+
+    def compute_indicators(self, candles: list) -> dict:
+        closes  = [c["close"]  for c in candles]
         volumes = [c["volume"] for c in candles]
 
-        # Trend Indicators
-        ema_fast_series = self._ema(closes, self.CONFIG["ema_fast"])
-        ema_slow_series = self._ema(closes, self.CONFIG["ema_slow"])
-        rsi = self._rsi(closes, self.CONFIG["rsi_period"])
+        ef_s = self._ema(closes, self.CONFIG["ema_fast"])
+        es_s = self._ema(closes, self.CONFIG["ema_slow"])
+        et_s = self._ema(closes, self.CONFIG["ema_trend"])
+        rsi  = self._rsi(closes, self.CONFIG["rsi_period"])
+        atr  = self._atr(candles, self.CONFIG["atr_period"])
+        macd = self._macd(closes)
+        st   = self._supertrend(candles, self.CONFIG["st_period"], self.CONFIG["st_multiplier"])
 
-        # Volatility Indicator
-        atr = self._atr(candles, self.CONFIG["atr_period"])
-
-        # Momentum Indicator
-        macd_data = self._macd(closes)
-
-        # Volume Analysis
-        volume_ma = self._volume_ma(volumes, self.CONFIG["volume_ma_period"])
-        current_volume = volumes[-1] if volumes else 0
-        volume_ratio = (current_volume / volume_ma) if volume_ma > 0 else 0
+        vm = self.CONFIG["volume_ma_period"]
+        vol_ma    = (sum(volumes[-vm:]) / vm
+                     if len(volumes) >= vm
+                     else (sum(volumes) / len(volumes) if volumes else 0))
+        vol_ratio = (volumes[-1] / vol_ma) if vol_ma > 0 else 0
 
         return {
-            # EMA Indicators
-            "ema_fast":    ema_fast_series[-1] if ema_fast_series else None,
-            "ema_slow":    ema_slow_series[-1] if ema_slow_series else None,
-            "ema_fast_prev": ema_fast_series[-2] if len(ema_fast_series) >= 2 else None,
-            "ema_slow_prev": ema_slow_series[-2] if len(ema_slow_series) >= 2 else None,
-            "ema_fast_series": ema_fast_series,
-            "ema_slow_series": ema_slow_series,
-
-            # RSI
-            "rsi":         rsi,
-
-            # Volatility (ATR)
-            "atr":         atr,
-
-            # MACD
-            "macd":        macd_data["macd"],
-            "macd_signal": macd_data["signal"],
-            "macd_histogram": macd_data["histogram"],
-
-            # Volume
-            "volume":       current_volume,
-            "volume_ma":    volume_ma,
-            "volume_ratio": volume_ratio,
-
-            # Price
-            "last_close":  closes[-1] if closes else None,
-            "last_high":   highs[-1] if highs else None,
-            "last_low":    lows[-1] if lows else None,
+            "ema_fast":       ef_s[-1]  if ef_s              else None,
+            "ema_fast_prev":  ef_s[-2]  if len(ef_s) >= 2    else None,
+            "ema_slow":       es_s[-1]  if es_s              else None,
+            "ema_slow_prev":  es_s[-2]  if len(es_s) >= 2    else None,
+            "ema_trend":      et_s[-1]  if et_s              else None,
+            "rsi":            rsi,
+            "atr":            atr,
+            "macd":           macd["macd"],
+            "macd_signal":    macd["signal"],
+            "macd_histogram": macd["histogram"],
+            "volume_ratio":   round(vol_ratio, 4),
+            "last_close":     closes[-1]        if closes       else None,
+            "st_direction":   st[-1]["direction"] if st           else 1,
+            "st_prev_dir":    st[-2]["direction"] if len(st) >= 2 else 1,
+            "st_value":       st[-1]["value"]     if st           else 0.0,
         }
+
+    # ── Confidence scoring ──────────────────────────────────────────────
 
     def calculate_confidence(self, ind: dict, position_type: str) -> float:
         """
-        Calculate strategy confidence (0-100%) based on multiple indicator alignment.
-
-        Factors (weights):
-        - EMA crossover & trend (30%)
-        - MACD confirmation (25%)
-        - RSI alignment (20%)
-        - Volume confirmation (15%)
-        - Trend strength - EMA separation (10%)
-
-        Args:
-            position_type: "LONG" or "SHORT"
+        Max 100 pts:
+          Supertrend alignment (+ fresh-flip bonus)   30 + 5
+          EMA 9/21 crossover + EMA 50 filter          15 + 10 + 5
+          MACD (line + histogram)                     20
+          Volume                                      15
+          RSI                                         10
+          ─────────────────────────────────────────── 110 → capped at 100
         """
-        confidence = 0.0
+        conf = 0.0
 
-        if not ind.get("ema_fast") or not ind.get("ema_slow"):
-            return 0.0
-
-        # 1. EMA Crossover & Trend (30% weight)
-        ema_diff = abs(ind["ema_fast"] - ind["ema_slow"])
-        ema_separation = abs(ind["ema_slow"] - ind["ema_fast"]) if ind["ema_slow"] else 0.01
-
+        # 1. Supertrend (30 pts + 5 bonus for fresh flip)
+        st_dir  = ind.get("st_direction", 0)
+        st_prev = ind.get("st_prev_dir",  0)
         if position_type == "LONG":
-            # LONG: fast EMA above slow EMA = uptrend
-            if ind["ema_fast"] > ind["ema_slow"]:
-                confidence += 30
-                # Extra bonus for fresh crossover
-                if (ind["ema_fast_prev"] and ind["ema_slow_prev"] and
-                    ind["ema_fast_prev"] <= ind["ema_slow_prev"]):
-                    confidence += 5  # Fresh crossover bonus
+            if st_dir == 1:
+                conf += 30
+                if st_prev == -1:   # fresh bullish flip
+                    conf += 5
         else:
-            # SHORT: fast EMA below slow EMA = downtrend
-            if ind["ema_fast"] < ind["ema_slow"]:
-                confidence += 30
-                # Extra bonus for fresh crossover
-                if (ind["ema_fast_prev"] and ind["ema_slow_prev"] and
-                    ind["ema_fast_prev"] >= ind["ema_slow_prev"]):
-                    confidence += 5  # Fresh crossover bonus
+            if st_dir == -1:
+                conf += 30
+                if st_prev == 1:    # fresh bearish flip
+                    conf += 5
 
-        # 2. MACD Confirmation (25% weight)
-        macd_hist = ind.get("macd_histogram", 0)
+        # 2. EMA 9/21 + EMA 50 filter (up to 30 pts)
+        ef, es, et = (ind.get("ema_fast"),
+                      ind.get("ema_slow"),
+                      ind.get("ema_trend"))
+        efp, esp   = (ind.get("ema_fast_prev"),
+                      ind.get("ema_slow_prev"))
+        price = ind.get("last_close", 0)
+        if ef and es and price:
+            if position_type == "LONG":
+                if ef > es:
+                    conf += 15
+                    if et and price > et:      # above EMA 50 = confirmed uptrend
+                        conf += 10
+                    if efp and esp and efp <= esp:  # fresh EMA cross-up
+                        conf += 5
+            else:
+                if ef < es:
+                    conf += 15
+                    if et and price < et:
+                        conf += 10
+                    if efp and esp and efp >= esp:
+                        conf += 5
+
+        # 3. MACD (20 pts)
         macd = ind.get("macd", 0)
-        macd_signal = ind.get("macd_signal", 0)
-
+        sig  = ind.get("macd_signal", 0)
+        hist = ind.get("macd_histogram", 0)
         if position_type == "LONG":
-            # LONG: MACD > signal & positive histogram
-            if macd > macd_signal and macd_hist > 0:
-                confidence += 25
-            elif macd > macd_signal:
-                confidence += 12.5
+            if macd > sig and hist > 0:
+                conf += 20
+            elif macd > sig:
+                conf += 10
         else:
-            # SHORT: MACD < signal & negative histogram
-            if macd < macd_signal and macd_hist < 0:
-                confidence += 25
-            elif macd < macd_signal:
-                confidence += 12.5
+            if macd < sig and hist < 0:
+                conf += 20
+            elif macd < sig:
+                conf += 10
 
-        # 3. RSI Alignment (20% weight) - Relaxed thresholds
+        # 4. Volume (15 pts)
+        vr      = ind.get("volume_ratio", 0)
+        min_vol = max(self.CONFIG["min_volume_ratio"], 0.01)
+        if vr >= 1.0:
+            conf += 15
+        elif vr >= min_vol:
+            conf += 15 * (vr / min_vol)
+
+        # 5. RSI alignment (10 pts)
         rsi = ind.get("rsi", 50)
-
+        ob  = self.CONFIG["rsi_overbought"]
+        os  = self.CONFIG["rsi_oversold"]
         if position_type == "LONG":
-            # LONG: Low RSI is ideal, but allow values up to 80 for strong trends
-            if rsi < self.CONFIG["rsi_oversold"]:
-                confidence += 20  # Oversold - ideal entry
-            elif rsi < 50:
-                # RSI below 50 is good for LONG
-                confidence += 20 * (50 - rsi) / 50
-            else:
-                # Allow some trending setups (RSI 50-80)
-                confidence += max(0, 10 * (80 - rsi) / 30)
+            if rsi < os:
+                conf += 10
+            elif rsi < 55:
+                conf += 10 * (55 - rsi) / (55 - os)
+            elif rsi < ob:
+                conf += max(0.0, 5 * (ob - rsi) / (ob - 55))
         else:
-            # SHORT: High RSI is ideal, but allow down to 20 for strong trends
-            if rsi > self.CONFIG["rsi_overbought"]:
-                confidence += 20  # Overbought - ideal entry
-            elif rsi > 50:
-                # RSI above 50 is good for SHORT
-                confidence += 20 * (rsi - 50) / 50
-            else:
-                # Allow some trending setups (RSI 20-50)
-                confidence += max(0, 10 * (rsi - 20) / 30)
+            if rsi > ob:
+                conf += 10
+            elif rsi > 45:
+                conf += 10 * (rsi - 45) / (ob - 45)
+            elif rsi > os:
+                conf += max(0.0, 5 * (rsi - os) / (45 - os))
 
-        # 4. Volume Confirmation (15% weight)
-        volume_ratio = ind.get("volume_ratio", 0)
-        min_vol = self.CONFIG["min_volume_ratio"]
+        return min(100.0, round(conf, 1))
 
-        if volume_ratio >= 1.0:
-            confidence += 15  # Above average volume
-        elif volume_ratio >= min_vol:
-            confidence += 15 * (volume_ratio / min_vol)
+    # ── Position sizing ─────────────────────────────────────────────────
 
-        # 5. Trend Strength - EMA Separation (10% weight)
-        if ema_separation > 0 and ind["last_close"]:
-            last_close = ind["last_close"]
-            # Normalize: 2% of price = strong separation
-            trend_strength = min(1.0, ema_separation / (last_close * 0.02))
-            confidence += 10 * trend_strength
-
-        return min(100.0, round(confidence, 1))
-
-    def calculate_position_size(self, entry_price: float, atr: float, rsi: float, position_type: str) -> float:
-        """
-        Calculate dynamic position size based on volatility (ATR) and market conditions.
-
-        Lower volatility = larger position
-        Higher volatility = smaller position
-
-        Args:
-            entry_price: Current price
-            atr: Average True Range
-            rsi: Relative Strength Index
-            position_type: "LONG" or "SHORT"
-
-        Returns:
-            Position size in base currency (BTC)
-        """
-        base_size = self.CONFIG["quantity"]
-
-        if not self.CONFIG["volatility_adjusted"]:
-            return base_size
-
-        # Volatility adjustment: ATR as % of price
-        volatility_pct = (atr / entry_price) * 100
-
-        # Scale position inversely to volatility
-        # Low volatility (<0.5%) -> 1.0x multiplier
-        # High volatility (>2%) -> 0.5x multiplier
-        if volatility_pct < 0.5:
-            vol_multiplier = 1.0
-        elif volatility_pct > 2.0:
-            vol_multiplier = 0.5
+    def calculate_position_size(self, entry_price: float, atr: float,
+                                 rsi: float, position_type: str) -> float:
+        base = self.CONFIG["quantity"]
+        if not self.CONFIG["volatility_adjusted"] or not entry_price or not atr:
+            return base
+        vol_pct = (atr / entry_price) * 100
+        if vol_pct < 0.5:
+            m = 1.0
+        elif vol_pct > 3.0:
+            m = 0.5
         else:
-            # Linear interpolation
-            vol_multiplier = 1.0 - ((volatility_pct - 0.5) / 1.5) * 0.5
+            m = 1.0 - ((vol_pct - 0.5) / 2.5) * 0.5
+        return round(max(self.CONFIG["min_position_size"],
+                         min(self.CONFIG["max_position_size"], base * m)), 6)
 
-        # RSI adjustment: avoid extreme conditions
-        rsi_multiplier = 1.0
-        if position_type == "LONG":
-            if rsi < 20:  # Extremely oversold
-                rsi_multiplier = 1.1
-            elif rsi > 85:  # Extremely overbought
-                rsi_multiplier = 0.8
-        else:
-            if rsi > 80:  # Extremely overbought
-                rsi_multiplier = 1.1
-            elif rsi < 15:  # Extremely oversold
-                rsi_multiplier = 0.8
-
-        position_size = base_size * vol_multiplier * rsi_multiplier
-
-        # Clamp to min/max
-        position_size = max(self.CONFIG["min_position_size"],
-                           min(self.CONFIG["max_position_size"], position_size))
-
-        return round(position_size, 6)
-
-    def calculate_trailing_stop(self, entry_price: float, atr: float, position_type: str) -> float:
-        """
-        Calculate dynamic trailing stop based on ATR.
-
-        Args:
-            entry_price: Entry price
-            atr: Average True Range
-            position_type: "LONG" or "SHORT"
-
-        Returns:
-            Trailing stop price
-        """
-        multiplier = self.CONFIG["atr_multiplier"]
-
-        if position_type == "LONG":
-            # For LONG: stop below entry
-            trailing_stop = round(entry_price - (atr * multiplier), 4)
-        else:
-            # For SHORT: stop above entry
-            trailing_stop = round(entry_price + (atr * multiplier), 4)
-
-        return trailing_stop
+    # ── Main evaluate ────────────────────────────────────────────────────
 
     def evaluate(self, candles: List[Dict], return_confidence: bool = True) -> Union[str, None, Dict]:
-        """
-        Main entry point called by the bot on every new candle.
-
-        Advanced logic: EMA trend + MACD momentum + RSI filter + Volume check
-        ─────────────────────────────────────────────────────────────────────
-        BUY  when:
-          - Fast EMA cross above Slow EMA (uptrend)
-          - MACD crosses above signal (momentum)
-          - Volume >= 80% of MA (confirmation)
-          - Relaxed RSI (no longer requires < 70)
-
-        SELL when:
-          - Fast EMA cross below Slow EMA (downtrend)
-          - MACD crosses below signal (momentum)
-          - Volume >= 80% of MA (confirmation)
-          - Relaxed RSI (no longer requires > 30)
-
-        Args:
-            candles: List of candle dicts with OHLCV data
-            return_confidence: If True, return full dict with ATR and trailing stop.
-                              If False, return just signal string (backward compatible)
-
-        Returns:
-            dict: {"signal": str, "confidence": float, "auto_execute": bool,
-                   "atr": float, "position_size": float, "trailing_stop": float}
-            or str: "BUY"/"SELL"/None (if return_confidence=False)
-        """
-        min_candles = max(self.CONFIG["ema_slow"], self.CONFIG["macd_slow"]) + 5
-        if len(candles) < min_candles:
-            if return_confidence:
-                return {
-                    "signal": None,
-                    "confidence": 0.0,
-                    "auto_execute": False,
-                    "atr": 0.0,
-                    "position_size": 0.0,
-                    "trailing_stop": 0.0
-                }
-            return None
+        _null = {
+            "signal": None, "confidence": 0.0, "auto_execute": False,
+            "atr": 0.0, "position_size": 0.0, "trailing_stop": 0.0,
+        }
+        min_c = (max(self.CONFIG["ema_trend"], self.CONFIG["macd_slow"])
+                 + self.CONFIG["st_period"] + 5)
+        if len(candles) < min_c:
+            return _null if return_confidence else None
 
         ind = self.compute_indicators(candles)
-
         if None in (ind["ema_fast"], ind["ema_slow"],
                     ind["ema_fast_prev"], ind["ema_slow_prev"]):
-            if return_confidence:
-                return {
-                    "signal": None,
-                    "confidence": 0.0,
-                    "auto_execute": False,
-                    "atr": 0.0,
-                    "position_size": 0.0,
-                    "trailing_stop": 0.0
-                }
-            return None
+            return _null if return_confidence else None
 
-        # EMA crossover detection
-        crossed_up   = (ind["ema_fast_prev"] <= ind["ema_slow_prev"] and
-                        ind["ema_fast"]       >  ind["ema_slow"])
+        ef, es   = ind["ema_fast"],  ind["ema_slow"]
+        efp, esp = ind["ema_fast_prev"], ind["ema_slow_prev"]
+        macd     = ind["macd"]
+        sig      = ind["macd_signal"]
+        st_dir   = ind["st_direction"]
+        st_prev  = ind["st_prev_dir"]
+        atr      = ind["atr"]
+        price    = ind["last_close"]
+        vol_ok   = ind["volume_ratio"] >= self.CONFIG["min_volume_ratio"]
 
-        crossed_down = (ind["ema_fast_prev"] >= ind["ema_slow_prev"] and
-                        ind["ema_fast"]       <  ind["ema_slow"])
-
-        # MACD crossover detection
-        macd_crossed_up = (ind["macd"] > ind["macd_signal"])
-        macd_crossed_down = (ind["macd"] < ind["macd_signal"])
-
-        # Volume check
-        volume_confirmed = ind.get("volume_ratio", 0) >= self.CONFIG["min_volume_ratio"]
+        # EMA crossover helpers
+        ema_cross_up   = (efp <= esp) and (ef > es)
+        ema_cross_down = (efp >= esp) and (ef < es)
+        st_flip_bull   = (st_dir == 1  and st_prev == -1)
+        st_flip_bear   = (st_dir == -1 and st_prev == 1)
 
         signal = None
-        confidence = 0.0
+
+        # ── LONG ─────────────────────────────────────────────────────────
+        if (st_dir == 1
+                and (ema_cross_up or st_flip_bull)
+                and ef > es
+                and macd >= sig
+                and vol_ok):
+            signal = "LONG"
+
+        # ── SHORT ────────────────────────────────────────────────────────
+        elif (st_dir == -1
+              and (ema_cross_down or st_flip_bear)
+              and ef < es
+              and macd <= sig
+              and vol_ok):
+            signal = "SHORT"
+
+        confidence   = 0.0
         auto_execute = False
-        atr = ind.get("atr", 0.0)
-        position_size = 0.0
+        pos_size     = 0.0
         trailing_stop = 0.0
 
-        current_price = ind["last_close"]
-
-        # LONG Signal: EMA crossup + MACD confirmation + Volume check
-        if crossed_up and macd_crossed_up and volume_confirmed:
-            signal = "LONG"
-            confidence = self.calculate_confidence(ind, "LONG")
-            position_size = self.calculate_position_size(current_price, atr, ind["rsi"], "LONG")
-            trailing_stop = self.calculate_trailing_stop(current_price, atr, "LONG")
-            auto_execute = self.CONFIG["auto_execute"] and confidence >= self.CONFIG["confidence_threshold"]
+        if signal:
+            confidence   = self.calculate_confidence(ind, signal)
+            auto_execute = (self.CONFIG["auto_execute"]
+                            and confidence >= self.CONFIG["confidence_threshold"])
+            pos_size     = self.calculate_position_size(price, atr, ind["rsi"], signal)
+            mult         = self.CONFIG["atr_multiplier"]
+            trailing_stop = (round(price - atr * mult, 6) if signal == "LONG"
+                             else round(price + atr * mult, 6))
             logger.info(
-                f"LONG signal | EMA: {ind['ema_fast']:.2f}>{ind['ema_slow']:.2f} | "
-                f"MACD: {ind['macd']:.4f}>{ind['macd_signal']:.4f} | RSI: {ind['rsi']} | "
-                f"Volume: {ind['volume_ratio']:.2f}x | ATR: {atr:.4f} | "
-                f"Confidence: {confidence:.1f}% | Position Size: {position_size:.6f} BTC | "
-                f"Trailing Stop: {trailing_stop:.2f} | Auto-execute: {auto_execute}"
-            )
-
-        # SHORT Signal: EMA crossdown + MACD confirmation + Volume check
-        elif crossed_down and macd_crossed_down and volume_confirmed:
-            signal = "SHORT"
-            confidence = self.calculate_confidence(ind, "SHORT")
-            position_size = self.calculate_position_size(current_price, atr, ind["rsi"], "SHORT")
-            trailing_stop = self.calculate_trailing_stop(current_price, atr, "SHORT")
-            auto_execute = self.CONFIG["auto_execute"] and confidence >= self.CONFIG["confidence_threshold"]
-            logger.info(
-                f"SHORT signal | EMA: {ind['ema_fast']:.2f}<{ind['ema_slow']:.2f} | "
-                f"MACD: {ind['macd']:.4f}<{ind['macd_signal']:.4f} | RSI: {ind['rsi']} | "
-                f"Volume: {ind['volume_ratio']:.2f}x | ATR: {atr:.4f} | "
-                f"Confidence: {confidence:.1f}% | Position Size: {position_size:.6f} BTC | "
-                f"Trailing Stop: {trailing_stop:.2f} | Auto-execute: {auto_execute}"
+                f"[Enhanced v2 | Supertrend Trend] {signal} | "
+                f"ST:{st_dir}(flip:{st_flip_bull or st_flip_bear}) "
+                f"EMA:{ef:.4f}/{es:.4f}/{ind.get('ema_trend', 0):.4f} "
+                f"MACD:{macd:.6f}/{sig:.6f} hist:{ind['macd_histogram']:.6f} "
+                f"RSI:{ind['rsi']} Vol:{ind['volume_ratio']:.2f}x "
+                f"ATR:{atr:.6f} Conf:{confidence:.1f}% AE:{auto_execute}"
             )
 
         if return_confidence:
             return {
-                "signal": signal,
-                "confidence": confidence,
-                "auto_execute": auto_execute,
-                "atr": atr,
-                "position_size": position_size,
-                "trailing_stop": trailing_stop
+                "signal": signal, "confidence": confidence,
+                "auto_execute": auto_execute, "atr": atr,
+                "position_size": pos_size, "trailing_stop": trailing_stop,
             }
         return signal
 
-    def calculate_tp_sl(self, entry_price: float, position_type: str, atr: float = 0.0) -> tuple[float, float]:
-        """
-        Returns (tp_price, sl_price) based on CONFIG percentages.
-        Can use fixed percentages or ATR-based dynamic stops.
+    # ── TP / SL ──────────────────────────────────────────────────────────
 
-        Args:
-            entry_price: Entry price
-            position_type: "LONG" or "SHORT"
-            atr: ATR value (optional for dynamic stops)
+    def calculate_tp_sl(self, entry_price: float, position_type: str,
+                         atr: float = 0.0) -> tuple:
         """
-        tp_pct = self.CONFIG["tp_pct"]
-        sl_pct = self.CONFIG["sl_pct"]
-
+        Fixed-percentage TP/SL applied to the raw price.
+          TP = 15 % → price must move 15 % from entry
+          SL = 10 % → price must move 10 % against entry
+        At 5x leverage that translates to ≈75 % account gain / ≈50 % account loss.
+        """
+        tp = self.CONFIG["tp_pct"]   # 0.15
+        sl = self.CONFIG["sl_pct"]   # 0.10
         if position_type == "LONG":
-            tp = round(entry_price * (1 + tp_pct), 4)
-            sl = round(entry_price * (1 - sl_pct), 4)
-        else:
-            tp = round(entry_price * (1 - tp_pct), 4)
-            sl = round(entry_price * (1 + sl_pct), 4)
-
-        return tp, sl
+            return round(entry_price * (1 + tp), 4), round(entry_price * (1 - sl), 4)
+        return round(entry_price * (1 - tp), 4), round(entry_price * (1 + sl), 4)

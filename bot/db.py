@@ -83,7 +83,23 @@ def init_db():
     if "auto_enabled" not in cols:
         c.execute("ALTER TABLE pair_config ADD COLUMN auto_enabled INTEGER DEFAULT 0")
         c.execute("UPDATE pair_config SET auto_enabled=0 WHERE auto_enabled IS NULL")
-    
+    if "enabled_by_strategy" not in cols:
+        c.execute("ALTER TABLE pair_config ADD COLUMN enabled_by_strategy TEXT")
+    if "enabled_at_confidence" not in cols:
+        c.execute("ALTER TABLE pair_config ADD COLUMN enabled_at_confidence REAL")
+
+    # Batch checker mode: "auto" (cycle all strategies) or strategy key e.g. "enhanced_v2"
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS batch_checker_config (
+            id                  INTEGER PRIMARY KEY CHECK (id = 1),
+            batch_strategy_mode TEXT NOT NULL DEFAULT 'enhanced_v2',
+            updated_at          TEXT DEFAULT (datetime('now'))
+        )
+    """)
+    c.execute("""
+        INSERT OR IGNORE INTO batch_checker_config (id, batch_strategy_mode) VALUES (1, 'enhanced_v2')
+    """)
+
     # Add new strategy metric columns to trades table
     trade_cols = {row[1] for row in c.execute("PRAGMA table_info(trades)").fetchall()}
     if "atr" not in trade_cols:
@@ -329,17 +345,40 @@ def update_pair_enabled(pair: str, enabled: int):
     conn.close()
 
 
-def update_pair_auto_status(pair: str, enabled: int, auto_enabled: int):
-    """Update pair enabled and auto_enabled (used by batch confidence checker)."""
+def update_pair_auto_status(pair: str, enabled: int, auto_enabled: int,
+                            enabled_by_strategy: str = None, enabled_at_confidence: float = None):
+    """Update pair enabled, auto_enabled, and optional strategy/confidence (batch checker)."""
     conn = get_conn()
     conn.execute("""
-        UPDATE pair_config SET enabled=?, auto_enabled=?, updated_at=datetime('now') WHERE pair=?
-    """, (enabled, auto_enabled, pair))
+        UPDATE pair_config SET enabled=?, auto_enabled=?,
+            enabled_by_strategy=?, enabled_at_confidence=?,
+            updated_at=datetime('now') WHERE pair=?
+    """, (enabled, auto_enabled, enabled_by_strategy, enabled_at_confidence, pair))
     if conn.total_changes == 0:
         conn.execute("""
-            INSERT INTO pair_config (pair, enabled, auto_enabled, leverage, quantity, inr_amount, updated_at)
-            VALUES (?, ?, ?, 5, 0.001, 300.0, datetime('now'))
-        """, (pair, enabled, auto_enabled))
+            INSERT INTO pair_config (pair, enabled, auto_enabled, enabled_by_strategy, enabled_at_confidence, leverage, quantity, inr_amount, updated_at)
+            VALUES (?, ?, ?, ?, ?, 5, 0.001, 300.0, datetime('now'))
+        """, (pair, enabled, auto_enabled, enabled_by_strategy, enabled_at_confidence))
+    conn.commit()
+    conn.close()
+
+
+def get_batch_strategy_mode() -> str:
+    """Get batch checker mode: 'auto' or strategy key (e.g. 'enhanced_v2')."""
+    conn = get_conn()
+    row = conn.execute("SELECT batch_strategy_mode FROM batch_checker_config WHERE id=1").fetchone()
+    conn.close()
+    return (row["batch_strategy_mode"] or "enhanced_v2") if row else "enhanced_v2"
+
+
+def set_batch_strategy_mode(mode: str):
+    """Set batch checker mode: 'auto' or strategy key."""
+    conn = get_conn()
+    conn.execute("""
+        INSERT INTO batch_checker_config (id, batch_strategy_mode, updated_at)
+        VALUES (1, ?, datetime('now'))
+        ON CONFLICT(id) DO UPDATE SET batch_strategy_mode=excluded.batch_strategy_mode, updated_at=datetime('now')
+    """, (mode or "enhanced_v2",))
     conn.commit()
     conn.close()
 

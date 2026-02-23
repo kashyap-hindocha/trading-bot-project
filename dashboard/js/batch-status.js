@@ -79,21 +79,25 @@ function renderBatchStatus(data) {
     idleDisplay.style.display = 'none';
 
     if (progressText) {
+      const currentStrategy = data.current_strategy || data.batch_strategy_mode || '';
+      const strategyLabel = currentStrategy ? (currentStrategy === 'auto' ? 'Auto' : currentStrategy.replace(/_/g, ' ')) : '';
       progressText.textContent = totalBatches > 0
-        ? `Batch ${batchIndex} of ${totalBatches} (${totalPairs} pairs total)`
+        ? (strategyLabel ? `Strategy: ${strategyLabel} · ` : '') + `Batch ${batchIndex} of ${totalBatches} (${totalPairs} pairs)`
         : 'Processing...';
     }
 
-    // Show current 5 pairs with their confidence level
+    // Show current 5 pairs with their confidence level (and strategy name if present)
     if (pairsContainer) {
       if (currentBatchResults.length > 0) {
         pairsContainer.innerHTML = currentBatchResults.map(function (r) {
           const pair = r.pair || '';
           const confidence = r.readiness != null ? Number(r.readiness).toFixed(1) : '—';
           const label = formatPairLabel(pair);
+          const strat = r.strategy_name || r.strategy_key || '';
           const isHigh = confidence !== '—' && parseFloat(confidence) >= 75;
           const confClass = isHigh ? 'active-pair-confidence high' : (parseFloat(confidence) >= 50 ? 'active-pair-confidence medium' : 'active-pair-confidence low');
-          return '<span class="batch-pair-chip ' + confClass + '" style="padding: 6px 10px; border-radius: 6px; background: var(--gray-2); font-size: 12px; font-weight: 600;">' + label + ': ' + confidence + '%</span>';
+          const stratPart = strat ? ' · ' + strat : '';
+          return '<span class="batch-pair-chip ' + confClass + '" style="padding: 6px 10px; border-radius: 6px; background: var(--gray-2); font-size: 12px; font-weight: 600;">' + label + ': ' + confidence + '%' + stratPart + '</span>';
         }).join('');
       } else {
         pairsContainer.innerHTML = currentBatch.length > 0
@@ -110,7 +114,7 @@ function renderBatchStatus(data) {
       idleDot.classList.remove('pulse');
     }
     if (idleText) idleText.textContent = 'Idle';
-    const sec = Math.max(0, typeof secondsUntil === 'number' ? secondsUntil : (data.seconds_until_next ?? 120));
+    const sec = Math.max(0, typeof secondsUntil === 'number' ? secondsUntil : (data.seconds_until_next ?? 300));
     if (countdownVal) countdownVal.textContent = formatCountdown(sec);
   }
 
@@ -166,7 +170,7 @@ async function loadConfidenceHistory(page) {
   } catch (e) {
     console.debug('Confidence history load failed:', e);
     const tbody = document.getElementById('confidenceHistoryBody');
-    if (tbody) tbody.innerHTML = '<tr><td colspan="5" style="padding: 12px; color: var(--gray-1);">No history yet</td></tr>';
+    if (tbody) tbody.innerHTML = '<tr><td colspan="6" style="padding: 12px; color: var(--gray-1);">No history yet</td></tr>';
   }
 }
 
@@ -184,12 +188,14 @@ function renderConfidenceHistory(data) {
   const totalPages = data.total_pages || 0;
 
   if (items.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="5" style="padding: 12px; color: var(--gray-1);">No confidence history yet. Run a cycle to see last checked pairs.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" style="padding: 12px; color: var(--gray-1);">No confidence history yet. Run a cycle to see last checked pairs.</td></tr>';
   } else {
     tbody.innerHTML = items.map(function (r) {
       const pair = r.pair || '—';
       const label = formatPairLabel(pair);
       const confidence = r.readiness != null ? Number(r.readiness).toFixed(1) : '—';
+      const strategyName = r.strategy_name || r.strategy_key || '—';
+      const strategyDisplay = strategyName !== '—' ? strategyName.replace(/_/g, ' ') : '—';
       const bias = r.bias || '—';
       const rsi = r.rsi != null ? Number(r.rsi).toFixed(1) : '—';
       const checkedAt = r.checked_at ? (r.checked_at.replace('T', ' ').slice(0, 19)) : '—';
@@ -197,6 +203,7 @@ function renderConfidenceHistory(data) {
       return '<tr style="border-bottom: 1px solid var(--gray-3);">' +
         '<td style="padding: 8px;">' + label + '</td>' +
         '<td style="text-align: right; padding: 8px;" class="active-pair-confidence ' + confClass + '">' + confidence + '%</td>' +
+        '<td style="padding: 8px; font-size: 11px;">' + strategyDisplay + '</td>' +
         '<td style="padding: 8px;">' + bias + '</td>' +
         '<td style="text-align: right; padding: 8px;">' + rsi + '</td>' +
         '<td style="padding: 8px; font-size: 11px; color: var(--gray-1);">' + checkedAt + '</td></tr>';
