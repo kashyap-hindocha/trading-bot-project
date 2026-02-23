@@ -19,6 +19,7 @@ except Exception as e:
 
 from coindcx import CoinDCXREST
 import threading
+import time
 
 # IST timezone (UTC+5:30)
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -26,7 +27,11 @@ IST = timezone(timedelta(hours=5, minutes=30))
 # Confidence threshold for auto-enable/disable (75%)
 CONFIDENCE_THRESHOLD = 75.0
 BATCH_SIZE = 5
+BATCH_DELAY_SEC = 2   # Seconds between each batch of 5 to avoid API exhaustion (~27 batches * 2s ≈ 54s for 135 pairs)
 CYCLE_INTERVAL_SEC = 120  # 2 minutes — check enabled pairs confidence every 2 min
+
+# Only one batch cycle at a time (prevents overlapping runs)
+_batch_cycle_lock = threading.Lock()
 
 # Batch checker state (for UI)
 CONFIDENCE_HISTORY_MAX = 500  # Keep last N confidence results for history
@@ -702,9 +707,11 @@ def _seed_pair_config_if_empty():
 
 
 def _batch_compute_readiness(pairs, client, interval):
-    """Compute readiness for a batch of pairs (max 5). Returns list of {pair, readiness, ...}."""
+    """Compute readiness for exactly one batch of up to 5 pairs. Never more than BATCH_SIZE."""
+    # Enforce exactly 5 (or fewer for last batch): take first BATCH_SIZE only
+    batch_list = (list(pairs)[:BATCH_SIZE]) if pairs else []
     results = []
-    for pair in pairs[:BATCH_SIZE]:
+    for pair in batch_list:
         try:
             candles = client.get_candles(pair, interval, limit=150)
             closes = [c.get("close") for c in candles if c.get("close") is not None]
@@ -720,86 +727,99 @@ def _batch_compute_readiness(pairs, client, interval):
 
 
 def _run_batch_cycle():
-    """Run one full confidence-check cycle: iterate through ALL pairs in batches of 5.
-    For each batch: compute signal confidence (readiness) for 5 pairs; if >75% auto-enable.
-    After all pairs are checked, rest 10 minutes then repeat.
-    UI sees current_batch, current_batch_results (pair + confidence), batch_index, total_batches.
+    """Run one full confidence-check cycle: iterate through ALL pairs in batches of exactly 5.
+    Each batch processes only 5 pairs; then 2s delay before next batch to avoid API exhaustion.
+    For 135 pairs = 27 batches, ~54 seconds total. Only one cycle runs at a time (lock).
     """
     global _batch_state
-    if not STRATEGY_MANAGER_LOADED:
-        _batch_state["last_error"] = "Strategy manager not loaded"
+    if not _batch_cycle_lock.acquire(blocking=False):
+        app.logger.info("Batch cycle already running, skipping")
         return
-
-    _batch_state["is_processing"] = True
-    _batch_state["cycle_started_at"] = datetime.now(IST).isoformat()
-    _batch_state["last_error"] = None
-
     try:
-        _seed_pair_config_if_empty()
-        all_configs = db.get_all_pair_configs()
-        if not all_configs:
-            _batch_state["is_processing"] = False
-            _batch_state["last_run_at"] = datetime.now(IST).isoformat()
+        if not STRATEGY_MANAGER_LOADED:
+            _batch_state["last_error"] = "Strategy manager not loaded"
             return
 
-        all_pairs = [c["pair"] for c in all_configs]
-        total_pairs = len(all_pairs)
-        total_batches = (total_pairs + BATCH_SIZE - 1) // BATCH_SIZE if total_pairs else 0
+        _batch_state["is_processing"] = True
+        _batch_state["cycle_started_at"] = datetime.now(IST).isoformat()
+        _batch_state["last_error"] = None
 
-        active_strategy = strategy_manager.strategy_manager.get_active_strategy()
-        interval = active_strategy.get_config().get("interval", "5m") if active_strategy else "5m"
-        client = _get_coindcx_client()
+        try:
+            _seed_pair_config_if_empty()
+            all_configs = db.get_all_pair_configs()
+            if not all_configs:
+                _batch_state["is_processing"] = False
+                _batch_state["last_run_at"] = datetime.now(IST).isoformat()
+                return
 
-        # Set of pairs that are currently auto-enabled (for disable-if-below-threshold)
-        auto_enabled_set = {c["pair"] for c in db.get_auto_enabled_pairs()}
+            # Single fixed list for the whole cycle: never modify during loop
+            all_pairs = [c["pair"] for c in all_configs]
+            total_pairs = len(all_pairs)
+            total_batches = (total_pairs + BATCH_SIZE - 1) // BATCH_SIZE if total_pairs else 0
 
-        for batch_start in range(0, total_pairs, BATCH_SIZE):
-            batch = all_pairs[batch_start : batch_start + BATCH_SIZE]
-            batch_index_1based = (batch_start // BATCH_SIZE) + 1
+            active_strategy = strategy_manager.strategy_manager.get_active_strategy()
+            interval = active_strategy.get_config().get("interval", "5m") if active_strategy else "5m"
+            client = _get_coindcx_client()
 
-            _batch_state["current_batch"] = batch
-            _batch_state["batch_index"] = batch_index_1based
-            _batch_state["total_batches"] = total_batches
-            _batch_state["total_pairs"] = total_pairs
-            results = _batch_compute_readiness(batch, client, interval)
-            _batch_state["current_batch_results"] = results
+            auto_enabled_set = {c["pair"] for c in db.get_auto_enabled_pairs()}
 
-            # Append to confidence history for UI (last checked pairs)
-            now_iso = datetime.now(IST).isoformat()
-            for r in results:
-                entry = {**r, "checked_at": now_iso}
-                _batch_state["confidence_history"].append(entry)
-            _batch_state["confidence_history"] = _batch_state["confidence_history"][-CONFIDENCE_HISTORY_MAX:]
+            for batch_start in range(0, total_pairs, BATCH_SIZE):
+                # Exactly 5 pairs (or fewer on last batch): strict slice, no accumulation
+                batch = all_pairs[batch_start : batch_start + BATCH_SIZE]
+                batch_index_1based = (batch_start // BATCH_SIZE) + 1
 
-            for r in results:
-                pair = r.get("pair", "")
-                readiness = r.get("readiness", 0)
-                if readiness > CONFIDENCE_THRESHOLD:
-                    db.update_pair_auto_status(pair, 1, 1)
-                    db.log_event("INFO", f"Auto-enabled {pair} (confidence {readiness:.1f}% > {CONFIDENCE_THRESHOLD}%)")
-                elif pair in auto_enabled_set and readiness < CONFIDENCE_THRESHOLD:
-                    db.update_pair_auto_status(pair, 0, 0)
-                    db.log_event("INFO", f"Auto-disabled {pair} (confidence {readiness:.1f}% < {CONFIDENCE_THRESHOLD}%)")
-                if pair in auto_enabled_set and readiness < CONFIDENCE_THRESHOLD:
-                    auto_enabled_set.discard(pair)
-                elif readiness > CONFIDENCE_THRESHOLD:
-                    auto_enabled_set.add(pair)
+                # Ensure we never pass more than 5
+                if len(batch) > BATCH_SIZE:
+                    batch = batch[:BATCH_SIZE]
 
-        _batch_state["current_batch"] = []
-        _batch_state["current_batch_results"] = []
-        _batch_state["batch_index"] = 0
-    except Exception as e:
-        _batch_state["last_error"] = str(e)
-        app.logger.error(f"Batch cycle error: {e}")
+                _batch_state["current_batch"] = list(batch)
+                _batch_state["batch_index"] = batch_index_1based
+                _batch_state["total_batches"] = total_batches
+                _batch_state["total_pairs"] = total_pairs
+
+                results = _batch_compute_readiness(batch, client, interval)
+                _batch_state["current_batch_results"] = list(results)
+
+                # Append to confidence history (only these 5 results)
+                now_iso = datetime.now(IST).isoformat()
+                for r in results:
+                    entry = {**r, "checked_at": now_iso}
+                    _batch_state["confidence_history"].append(entry)
+                _batch_state["confidence_history"] = _batch_state["confidence_history"][-CONFIDENCE_HISTORY_MAX:]
+
+                for r in results:
+                    pair = r.get("pair", "")
+                    readiness = r.get("readiness", 0)
+                    if readiness > CONFIDENCE_THRESHOLD:
+                        db.update_pair_auto_status(pair, 1, 1)
+                        db.log_event("INFO", f"Auto-enabled {pair} (confidence {readiness:.1f}% > {CONFIDENCE_THRESHOLD}%)")
+                    elif pair in auto_enabled_set and readiness < CONFIDENCE_THRESHOLD:
+                        db.update_pair_auto_status(pair, 0, 0)
+                        db.log_event("INFO", f"Auto-disabled {pair} (confidence {readiness:.1f}% < {CONFIDENCE_THRESHOLD}%)")
+                    if pair in auto_enabled_set and readiness < CONFIDENCE_THRESHOLD:
+                        auto_enabled_set.discard(pair)
+                    elif readiness > CONFIDENCE_THRESHOLD:
+                        auto_enabled_set.add(pair)
+
+                # 2 second delay between batches to avoid API exhaustion (~54s for 135 pairs)
+                if batch_start + BATCH_SIZE < total_pairs:
+                    time.sleep(BATCH_DELAY_SEC)
+
+            _batch_state["current_batch"] = []
+            _batch_state["current_batch_results"] = []
+            _batch_state["batch_index"] = 0
+        except Exception as e:
+            _batch_state["last_error"] = str(e)
+            app.logger.error(f"Batch cycle error: {e}")
+        finally:
+            _batch_state["is_processing"] = False
+            _batch_state["last_run_at"] = datetime.now(IST).isoformat()
     finally:
-        _batch_state["is_processing"] = False
-        _batch_state["last_run_at"] = datetime.now(IST).isoformat()
+        _batch_cycle_lock.release()
 
 
 def _batch_checker_loop():
-    """Background thread: run full cycle (all batches) then wait 10 minutes.
-    No wait between batches — 10 min wait only after entire cycle completes.
-    """
+    """Background thread: run full cycle (all batches, 5 per batch, 2s between batches) then wait 2 min."""
     import time
     while True:
         try:
