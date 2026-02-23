@@ -31,6 +31,10 @@ CYCLE_INTERVAL_SEC = 600  # 10 minutes
 # Batch checker state (for UI)
 _batch_state = {
     "current_batch": [],
+    "current_batch_results": [],   # [{pair, readiness, bias, rsi}, ...] for the 5 being checked
+    "batch_index": 0,             # 1-based: which batch (e.g. 3 of 8)
+    "total_batches": 0,
+    "total_pairs": 0,
     "is_processing": False,
     "cycle_started_at": None,
     "next_run_at": None,
@@ -714,9 +718,10 @@ def _batch_compute_readiness(pairs, client, interval):
 
 
 def _run_batch_cycle():
-    """Run one full batch confidence-check cycle.
-    All pairs are processed in batches of 5 (no wait between batches).
-    The 10-minute wait occurs ONCE after the entire cycle completes.
+    """Run one full confidence-check cycle: iterate through ALL pairs in batches of 5.
+    For each batch: compute signal confidence (readiness) for 5 pairs; if >75% auto-enable.
+    After all pairs are checked, rest 10 minutes then repeat.
+    UI sees current_batch, current_batch_results (pair + confidence), batch_index, total_batches.
     """
     global _batch_state
     if not STRATEGY_MANAGER_LOADED:
@@ -735,35 +740,45 @@ def _run_batch_cycle():
             _batch_state["last_run_at"] = datetime.now(IST).isoformat()
             return
 
+        all_pairs = [c["pair"] for c in all_configs]
+        total_pairs = len(all_pairs)
+        total_batches = (total_pairs + BATCH_SIZE - 1) // BATCH_SIZE if total_pairs else 0
+
         active_strategy = strategy_manager.strategy_manager.get_active_strategy()
-        interval = active_strategy.get_config().get("interval", "1m") if active_strategy else "1m"
+        interval = active_strategy.get_config().get("interval", "5m") if active_strategy else "5m"
         client = _get_coindcx_client()
 
-        # Phase 1: Re-evaluate auto-enabled pairs, disable if confidence < 75%
-        auto_enabled = db.get_auto_enabled_pairs()
-        auto_pairs = [c["pair"] for c in auto_enabled]
-        for i in range(0, len(auto_pairs), BATCH_SIZE):
-            batch = auto_pairs[i : i + BATCH_SIZE]
-            _batch_state["current_batch"] = batch
-            results = _batch_compute_readiness(batch, client, interval)
-            for r in results:
-                if r.get("readiness", 0) < CONFIDENCE_THRESHOLD:
-                    db.update_pair_auto_status(r["pair"], 0, 0)
-                    db.log_event("INFO", f"Auto-disabled {r['pair']} (confidence {r.get('readiness', 0):.1f}% < {CONFIDENCE_THRESHOLD}%)")
+        # Set of pairs that are currently auto-enabled (for disable-if-below-threshold)
+        auto_enabled_set = {c["pair"] for c in db.get_auto_enabled_pairs()}
 
-        # Phase 2: Evaluate disabled pairs in batches of 5, enable if confidence > 75%
-        disabled = [c for c in all_configs if c.get("enabled") != 1]
-        disabled_pairs = [c["pair"] for c in disabled]
-        for i in range(0, len(disabled_pairs), BATCH_SIZE):
-            batch = disabled_pairs[i : i + BATCH_SIZE]
+        for batch_start in range(0, total_pairs, BATCH_SIZE):
+            batch = all_pairs[batch_start : batch_start + BATCH_SIZE]
+            batch_index_1based = (batch_start // BATCH_SIZE) + 1
+
             _batch_state["current_batch"] = batch
+            _batch_state["batch_index"] = batch_index_1based
+            _batch_state["total_batches"] = total_batches
+            _batch_state["total_pairs"] = total_pairs
             results = _batch_compute_readiness(batch, client, interval)
+            _batch_state["current_batch_results"] = results
+
             for r in results:
-                if r.get("readiness", 0) > CONFIDENCE_THRESHOLD:
-                    db.update_pair_auto_status(r["pair"], 1, 1)
-                    db.log_event("INFO", f"Auto-enabled {r['pair']} (confidence {r.get('readiness', 0):.1f}% > {CONFIDENCE_THRESHOLD}%)")
+                pair = r.get("pair", "")
+                readiness = r.get("readiness", 0)
+                if readiness > CONFIDENCE_THRESHOLD:
+                    db.update_pair_auto_status(pair, 1, 1)
+                    db.log_event("INFO", f"Auto-enabled {pair} (confidence {readiness:.1f}% > {CONFIDENCE_THRESHOLD}%)")
+                elif pair in auto_enabled_set and readiness < CONFIDENCE_THRESHOLD:
+                    db.update_pair_auto_status(pair, 0, 0)
+                    db.log_event("INFO", f"Auto-disabled {pair} (confidence {readiness:.1f}% < {CONFIDENCE_THRESHOLD}%)")
+                if pair in auto_enabled_set and readiness < CONFIDENCE_THRESHOLD:
+                    auto_enabled_set.discard(pair)
+                elif readiness > CONFIDENCE_THRESHOLD:
+                    auto_enabled_set.add(pair)
 
         _batch_state["current_batch"] = []
+        _batch_state["current_batch_results"] = []
+        _batch_state["batch_index"] = 0
     except Exception as e:
         _batch_state["last_error"] = str(e)
         app.logger.error(f"Batch cycle error: {e}")
@@ -1097,6 +1112,10 @@ def batch_status():
 
         return jsonify({
             "current_batch": _batch_state.get("current_batch", []),
+            "current_batch_results": _batch_state.get("current_batch_results", []),
+            "batch_index": _batch_state.get("batch_index", 0),
+            "total_batches": _batch_state.get("total_batches", 0),
+            "total_pairs": _batch_state.get("total_pairs", 0),
             "is_processing": _batch_state.get("is_processing", False),
             "cycle_started_at": _batch_state.get("cycle_started_at"),
             "next_run_at": _batch_state.get("next_run_at"),

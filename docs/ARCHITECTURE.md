@@ -8,7 +8,7 @@
 
 ### Project Purpose
 
-The trading bot automates crypto futures trading on **CoinDCX** via its REST and WebSocket APIs. When the selected strategy matches trading conditions at **90% confidence** (configurable), it executes trades and sets **Take Profit (TP)** and **Stop Loss (SL)** based on the strategy.
+The trading bot automates crypto futures trading on **CoinDCX** via its REST and WebSocket APIs. When the selected strategy matches trading conditions at **75% confidence** (configurable via strategy `confidence_threshold`), it executes trades and sets **Take Profit (TP)** and **Stop Loss (SL)** based on the strategy.
 
 ### Key Features
 
@@ -16,7 +16,7 @@ The trading bot automates crypto futures trading on **CoinDCX** via its REST and
 |---------|-------------|
 | **Paper Mode** | Simulates trades internally; no real orders. Tracks entry/exit, TP/SL hits, P&L to validate strategy before going live. |
 | **Real Mode** | Executes live trades with real money using CoinDCX APIs. |
-| **Strategy-Based Execution** | Uses configurable strategies (e.g. EMA, MACD, RSI, volume). Executes only when confidence ≥ threshold (default 75%, UI shows 90% threshold). |
+| **Strategy-Based Execution** | Uses configurable strategies (e.g. EMA, MACD, RSI, volume). Executes only when confidence ≥ threshold (default 75%). Batch auto-enable/disable uses a separate **readiness** (proximity) metric at 75%—see docs/PROJECT_ANALYSIS.md. |
 | **TP/SL** | Calculated per strategy (percentage or ATR-based) and placed via API or simulated in paper mode. |
 | **Web Dashboard** | Visualizes open positions, live P&L, trade history; enables strategy switching, bot start/stop, pair management, signal readiness. |
 

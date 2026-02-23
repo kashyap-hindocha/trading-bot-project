@@ -39,10 +39,16 @@ async function loadBatchStatus() {
   }
 }
 
+function formatPairLabel(pair) {
+  if (!pair || typeof pair !== 'string') return '—';
+  return pair.replace('B-', '').replace('_USDT', '') + '/USDT';
+}
+
 function renderBatchStatus(data) {
   const liveDisplay = document.getElementById('batchLiveDisplay');
   const idleDisplay = document.getElementById('batchIdleDisplay');
-  const currentPairs = document.getElementById('batchCurrentPairs');
+  const progressText = document.getElementById('batchProgressText');
+  const pairsContainer = document.getElementById('batchPairsWithConfidence');
   const countdownVal = document.getElementById('batchCountdownVal');
   const idleDot = document.getElementById('batchIdleDot');
   const idleText = document.getElementById('batchIdleText');
@@ -51,6 +57,10 @@ function renderBatchStatus(data) {
 
   const isProcessing = data.is_processing || false;
   const currentBatch = data.current_batch || [];
+  const currentBatchResults = data.current_batch_results || [];
+  const batchIndex = data.batch_index || 0;
+  const totalBatches = data.total_batches || 0;
+  const totalPairs = data.total_pairs || 0;
   const secondsUntil = data.seconds_until_next ?? data.seconds_until_next;
   const lastError = data.last_error;
 
@@ -67,11 +77,28 @@ function renderBatchStatus(data) {
     liveDisplay.style.display = 'block';
     idleDisplay.style.display = 'none';
 
-    if (currentBatch.length > 0) {
-      const labels = currentBatch.map(p => p.replace('B-', '').replace('_USDT', ''));
-      currentPairs.textContent = labels.join(', ');
-    } else {
-      currentPairs.textContent = '—';
+    if (progressText) {
+      progressText.textContent = totalBatches > 0
+        ? `Batch ${batchIndex} of ${totalBatches} (${totalPairs} pairs total)`
+        : 'Processing...';
+    }
+
+    // Show current 5 pairs with their confidence level
+    if (pairsContainer) {
+      if (currentBatchResults.length > 0) {
+        pairsContainer.innerHTML = currentBatchResults.map(function (r) {
+          const pair = r.pair || '';
+          const confidence = r.readiness != null ? Number(r.readiness).toFixed(1) : '—';
+          const label = formatPairLabel(pair);
+          const isHigh = confidence !== '—' && parseFloat(confidence) >= 75;
+          const confClass = isHigh ? 'active-pair-confidence high' : (parseFloat(confidence) >= 50 ? 'active-pair-confidence medium' : 'active-pair-confidence low');
+          return '<span class="batch-pair-chip ' + confClass + '" style="padding: 6px 10px; border-radius: 6px; background: var(--gray-2); font-size: 12px; font-weight: 600;">' + label + ': ' + confidence + '%</span>';
+        }).join('');
+      } else {
+        pairsContainer.innerHTML = currentBatch.length > 0
+          ? currentBatch.map(function (p) { return '<span class="batch-pair-chip" style="padding: 6px 10px; border-radius: 6px; background: var(--gray-2); font-size: 12px;">' + formatPairLabel(p) + ': …</span>'; }).join('')
+          : '<span style="color: var(--gray-1); font-size: 12px;">Calculating confidence…</span>';
+      }
     }
   } else {
     liveDisplay.style.display = 'none';
