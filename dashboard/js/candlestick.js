@@ -82,7 +82,7 @@ async function updateCandleChart() {
     const interval = currentTimeframe;
 
     // Fetch candles from API
-    const response = await fetch(`${API}/api/candles?pair=${encodeURIComponent(pair)}&interval=${interval}&limit=100`);
+    const response = await fetch(`${API}/api/candles?pair=${encodeURIComponent(pair)}&interval=${interval}&limit=50`);
     if (!response.ok) return;
 
     const data = await response.json();

@@ -280,9 +280,13 @@ async function savePairConfig(pair, showSuccess = false) {
 }
 
 async function updateReadiness() {
-  if (!pairsList || !pairsList.length) return;
+  // API accepts max 5 pairs per request (batch-of-5); use enabled pairs only to save data
+  const enabledPairIds = (typeof pairSignals !== 'undefined' && Array.isArray(pairSignals))
+    ? pairSignals.slice(0, 5).map(p => p.pair)
+    : (pairsList || []).slice(0, 5);
+  if (!enabledPairIds.length) return;
   try {
-    const resp = await fetch(API + '/api/signal/readiness?pairs=' + encodeURIComponent(pairsList.join(',')));
+    const resp = await fetch(API + '/api/signal/readiness?pairs=' + encodeURIComponent(enabledPairIds.join(',')));
     const data = await resp.json();
 
     if (!Array.isArray(data)) return;

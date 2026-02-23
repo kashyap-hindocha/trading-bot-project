@@ -26,13 +26,14 @@ IST = timezone(timedelta(hours=5, minutes=30))
 # Confidence threshold for auto-enable/disable (75%)
 CONFIDENCE_THRESHOLD = 75.0
 BATCH_SIZE = 5
-CYCLE_INTERVAL_SEC = 600  # 10 minutes
+CYCLE_INTERVAL_SEC = 120  # 2 minutes — check enabled pairs confidence every 2 min
 
 # Batch checker state (for UI)
+CONFIDENCE_HISTORY_MAX = 500  # Keep last N confidence results for history
 _batch_state = {
     "current_batch": [],
     "current_batch_results": [],   # [{pair, readiness, bias, rsi}, ...] for the 5 being checked
-    "batch_index": 0,             # 1-based: which batch (e.g. 3 of 8)
+    "batch_index": 0,
     "total_batches": 0,
     "total_pairs": 0,
     "is_processing": False,
@@ -40,6 +41,7 @@ _batch_state = {
     "next_run_at": None,
     "last_run_at": None,
     "last_error": None,
+    "confidence_history": [],      # Last confidence check results: [{pair, readiness, bias, rsi, checked_at}, ...]
 }
 
 app = Flask(__name__)
@@ -762,6 +764,13 @@ def _run_batch_cycle():
             results = _batch_compute_readiness(batch, client, interval)
             _batch_state["current_batch_results"] = results
 
+            # Append to confidence history for UI (last checked pairs)
+            now_iso = datetime.now(IST).isoformat()
+            for r in results:
+                entry = {**r, "checked_at": now_iso}
+                _batch_state["confidence_history"].append(entry)
+            _batch_state["confidence_history"] = _batch_state["confidence_history"][-CONFIDENCE_HISTORY_MAX:]
+
             for r in results:
                 pair = r.get("pair", "")
                 readiness = r.get("readiness", 0)
@@ -825,7 +834,8 @@ def signal_readiness():
         active_strategy = strategy_manager.strategy_manager.get_active_strategy()
         interval = active_strategy.get_config().get("interval", "1m") if active_strategy else "1m"
         
-        for pair in pairs[:20]:
+        # Max 5 pairs per request to avoid API exhaustion and align with batch-of-5 checking
+        for pair in pairs[:5]:
             try:
                 candles = client.get_candles(pair, interval, limit=150)
                 closes = [c.get("close") for c in candles if c.get("close") is not None]
@@ -857,10 +867,10 @@ def get_candles():
     try:
         pair = request.args.get("pair", "B-BTC_USDT")
         interval = request.args.get("interval", "5m")
-        limit = int(request.args.get("limit", 100))
-        
-        if limit > 500:
-            limit = 500
+        limit = int(request.args.get("limit", 50))
+        # Cap at 80 to match UI chart needs and save data
+        if limit > 80:
+            limit = 80
         
         client = CoinDCXREST("", "")
         candles = client.get_candles(pair, interval, limit=limit)
@@ -959,7 +969,13 @@ def bot_start():
         )
         if result.returncode == 0:
             db.log_event("INFO", "Bot started manually from dashboard")
-            return jsonify({"success": True, "message": "Bot started"})
+            # Trigger one batch cycle so pairs get re-evaluated (batch-of-5) after start
+            try:
+                t = threading.Thread(target=_run_batch_cycle, daemon=True)
+                t.start()
+            except Exception as e:
+                app.logger.warning(f"Batch trigger on start: {e}")
+            return jsonify({"success": True, "message": "Bot started; confidence check triggered"})
         return jsonify({"success": False, "message": result.stderr or "Failed"}), 500
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 500
@@ -974,8 +990,22 @@ def bot_stop():
             capture_output=True, text=True, timeout=10
         )
         if result.returncode == 0:
+            # Disable all pairs when bot is turned off so they are re-evaluated on next start
+            try:
+                all_configs = db.get_all_pair_configs()
+                for cfg in all_configs:
+                    if cfg.get("enabled") == 1:
+                        db.upsert_pair_config(
+                            cfg["pair"], 0,
+                            cfg.get("leverage", 5),
+                            cfg.get("quantity", 0.001),
+                            cfg.get("inr_amount", 300.0)
+                        )
+                db.log_event("INFO", "All pairs disabled on bot stop")
+            except Exception as e:
+                app.logger.warning(f"Disable-all on stop: {e}")
             db.log_event("WARNING", "Bot stopped manually from dashboard")
-            return jsonify({"success": True, "message": "Bot stopped"})
+            return jsonify({"success": True, "message": "Bot stopped; all pairs disabled"})
         return jsonify({"success": False, "message": result.stderr or "Failed"}), 500
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 500
@@ -1127,6 +1157,40 @@ def batch_status():
                 for c in auto_enabled
             ],
         })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/batch/confidence_history")
+def batch_confidence_history():
+    """Paginated last confidence check results (15 per page). Updates when next iteration runs."""
+    try:
+        page = max(1, int(request.args.get("page", 1)))
+        per_page = min(50, max(1, int(request.args.get("per_page", 15))))
+        history = list(_batch_state.get("confidence_history", []))
+        total = len(history)
+        # Newest last in list; show newest first in UI
+        history_reversed = list(reversed(history))
+        start = (page - 1) * per_page
+        chunk = history_reversed[start : start + per_page]
+        return jsonify({
+            "items": chunk,
+            "page": page,
+            "per_page": per_page,
+            "total": total,
+            "total_pages": (total + per_page - 1) // per_page if total else 0,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/batch/trigger", methods=["POST"])
+def batch_trigger():
+    """Run one confidence-check cycle now (e.g. after bot start)."""
+    try:
+        t = threading.Thread(target=_run_batch_cycle, daemon=True)
+        t.start()
+        return jsonify({"success": True, "message": "Confidence check cycle started"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

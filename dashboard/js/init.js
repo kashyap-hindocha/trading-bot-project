@@ -12,8 +12,7 @@ document.addEventListener('DOMContentLoaded', async function () {
   await fetchMode();
   await loadStrategies();
 
-  // Load pair mode and signals (after pairs are loaded)
-  await loadPairMode();
+  // Load pair signals (multi-pair always enabled; no Trading Mode section)
   await loadPairSignals(); // Load horizontal pair signals
 
   // Load batch status and auto-enabled pairs
@@ -40,6 +39,9 @@ document.addEventListener('DOMContentLoaded', async function () {
   // Batch status self-schedules: every 2s during processing, 30s when idle
   if (typeof loadBatchStatus === 'function') {
     loadBatchStatus();
+  }
+  if (typeof initConfidenceHistoryPagination === 'function') {
+    initConfidenceHistoryPagination();
   }
 });
 

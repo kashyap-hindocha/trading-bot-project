@@ -7,7 +7,7 @@ Your bot now supports **trading multiple coins simultaneously** with **automated
 ### New Features:
 ✅ **Automated confidence-based pair enabling** — Pairs with >75% strategy confidence are auto-enabled  
 ✅ **Batch processing** — Evaluates 5 pairs at a time to avoid API exhaustion  
-✅ **10-minute cycle** — Full confidence check runs every 10 minutes  
+✅ **2-minute cycle** — Full confidence check runs every 2 minutes  
 ✅ **Auto-disable on drop** — Pairs below 75% confidence are automatically disabled  
 ✅ Independent bot process for each enabled pair  
 ✅ Per-pair leverage and quantity settings (defaults for auto-enabled pairs)  
@@ -23,15 +23,14 @@ Your bot now supports **trading multiple coins simultaneously** with **automated
 
 The system runs a background process that:
 
-1. **Every 10 minutes** — Evaluates all configured trading pairs in batches of 5
-2. **Phase 1** — Re-evaluates previously auto-enabled pairs. Any pair with confidence < 75% is automatically disabled
-3. **Phase 2** — Evaluates disabled pairs in batches of 5. Any pair with confidence > 75% is automatically enabled
-4. **Dashboard** — Shows which pairs are being evaluated, a countdown to the next cycle, and the auto-enabled pairs review panel with confidence bars
+1. **Every 2 minutes** — Evaluates all configured trading pairs in batches of 5
+2. Iterates through all pairs (e.g. 1–5, 6–10, …); any pair with confidence > 75% is auto-enabled, any auto-enabled pair below 75% is disabled
+3. **Dashboard** — Shows current batch (pair names + confidence %), countdown to next cycle, and last confidence history (15 per page, paginated)
 
 ### Batch Processing
 - Exactly **5 pairs per batch** to prevent API exhaustion and request timeouts
-- UI displays the 5 pairs currently being evaluated with an animated indicator
-- Countdown timer shows time until the next 10-minute cycle
+- UI displays the 5 pairs currently being evaluated with their confidence level
+- Countdown timer shows time until the next 2-minute cycle
 
 ### Auto-Enable / Auto-Disable
 - **Enable**: Confidence > 75% → pair is enabled for trading (no manual action)

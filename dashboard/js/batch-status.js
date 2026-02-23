@@ -16,6 +16,7 @@ async function loadBatchStatus() {
       throw new Error(data.error || 'Failed to load batch status');
     }
     renderBatchStatus(data);
+    loadConfidenceHistory(confHistoryCurrentPage);
 
     // Poll more frequently during processing for live batch updates
     if (batchPollHandle) clearTimeout(batchPollHandle);
@@ -109,7 +110,7 @@ function renderBatchStatus(data) {
       idleDot.classList.remove('pulse');
     }
     if (idleText) idleText.textContent = 'Idle';
-    const sec = Math.max(0, typeof secondsUntil === 'number' ? secondsUntil : (data.seconds_until_next ?? 600));
+    const sec = Math.max(0, typeof secondsUntil === 'number' ? secondsUntil : (data.seconds_until_next ?? 120));
     if (countdownVal) countdownVal.textContent = formatCountdown(sec);
   }
 
@@ -149,4 +150,68 @@ function tickBatchCountdown() {
 
 async function refreshBatchUI() {
   await loadBatchStatus();
+  loadConfidenceHistory(confHistoryCurrentPage);
+}
+
+// ── Confidence history (last checked pairs, 15 per page) ──
+let confHistoryCurrentPage = 1;
+const CONF_HISTORY_PER_PAGE = 15;
+
+async function loadConfidenceHistory(page) {
+  try {
+    const res = await fetch(API + '/api/batch/confidence_history?page=' + page + '&per_page=' + CONF_HISTORY_PER_PAGE);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed');
+    renderConfidenceHistory(data);
+  } catch (e) {
+    console.debug('Confidence history load failed:', e);
+    const tbody = document.getElementById('confidenceHistoryBody');
+    if (tbody) tbody.innerHTML = '<tr><td colspan="5" style="padding: 12px; color: var(--gray-1);">No history yet</td></tr>';
+  }
+}
+
+function renderConfidenceHistory(data) {
+  const tbody = document.getElementById('confidenceHistoryBody');
+  const summary = document.getElementById('confidenceHistorySummary');
+  const pageInfo = document.getElementById('confHistoryPageInfo');
+  const prevBtn = document.getElementById('confHistoryPrev');
+  const nextBtn = document.getElementById('confHistoryNext');
+  if (!tbody) return;
+
+  const items = data.items || [];
+  const total = data.total || 0;
+  const page = data.page || 1;
+  const totalPages = data.total_pages || 0;
+
+  if (items.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" style="padding: 12px; color: var(--gray-1);">No confidence history yet. Run a cycle to see last checked pairs.</td></tr>';
+  } else {
+    tbody.innerHTML = items.map(function (r) {
+      const pair = r.pair || '—';
+      const label = formatPairLabel(pair);
+      const confidence = r.readiness != null ? Number(r.readiness).toFixed(1) : '—';
+      const bias = r.bias || '—';
+      const rsi = r.rsi != null ? Number(r.rsi).toFixed(1) : '—';
+      const checkedAt = r.checked_at ? (r.checked_at.replace('T', ' ').slice(0, 19)) : '—';
+      const confClass = confidence !== '—' && parseFloat(confidence) >= 75 ? 'high' : (parseFloat(confidence) >= 50 ? 'medium' : 'low');
+      return '<tr style="border-bottom: 1px solid var(--gray-3);">' +
+        '<td style="padding: 8px;">' + label + '</td>' +
+        '<td style="text-align: right; padding: 8px;" class="active-pair-confidence ' + confClass + '">' + confidence + '%</td>' +
+        '<td style="padding: 8px;">' + bias + '</td>' +
+        '<td style="text-align: right; padding: 8px;">' + rsi + '</td>' +
+        '<td style="padding: 8px; font-size: 11px; color: var(--gray-1);">' + checkedAt + '</td></tr>';
+    }).join('');
+  }
+
+  if (summary) summary.textContent = total ? 'Total ' + total + ' entries (15 per page)' : '—';
+  if (pageInfo) pageInfo.textContent = totalPages ? 'Page ' + page + ' of ' + totalPages : 'Page 1';
+  if (prevBtn) prevBtn.disabled = page <= 1;
+  if (nextBtn) nextBtn.disabled = page >= totalPages || totalPages === 0;
+}
+
+function initConfidenceHistoryPagination() {
+  const prevBtn = document.getElementById('confHistoryPrev');
+  const nextBtn = document.getElementById('confHistoryNext');
+  if (prevBtn) prevBtn.onclick = function () { if (confHistoryCurrentPage > 1) { confHistoryCurrentPage--; loadConfidenceHistory(confHistoryCurrentPage); } };
+  if (nextBtn) nextBtn.onclick = function () { confHistoryCurrentPage++; loadConfidenceHistory(confHistoryCurrentPage); };
 }
