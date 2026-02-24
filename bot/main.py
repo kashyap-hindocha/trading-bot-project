@@ -46,16 +46,19 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ── Parse command-line arguments ─────────────
-PAIR     = "B-BTC_USDT"  # Default pair
+# bot_manager spawns: python main.py <PAIR>  (e.g. B-ETH_USDT)
+# Running without a pair argument is not supported and will exit immediately.
 INTERVAL = "5m"
 
 # Multi-pair only: bot_manager starts one main.py per enabled pair. Global cap below applies across all pairs.
 MAX_TOTAL_OPEN_TRADES = 3  # Max 3 open trades at a time (any combination of pairs)
 
-if len(sys.argv) > 1:
-    # Allow overriding pair from command line: python main.py B-ETH_USDT
-    PAIR = sys.argv[1]
-    logger.info(f"Using pair from command line: {PAIR}")
+if len(sys.argv) < 2:
+    logger.error("Usage: python main.py <PAIR>  (e.g. B-ETH_USDT). No pair argument provided — exiting.")
+    sys.exit(1)
+
+PAIR = sys.argv[1]
+logger.info(f"Starting bot for pair: {PAIR}")
 
 # ── Init ─────────────────────────────────────
 API_KEY    = os.getenv("COINDCX_API_KEY")

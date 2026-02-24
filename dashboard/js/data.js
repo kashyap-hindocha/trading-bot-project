@@ -506,5 +506,36 @@ function renderOpenTradeDetail(trade) {
         <div class="trade-detail-value">${trade.status || 'open'}</div>
       </div>
     </div>
+    ${!isLive && trade.status !== 'closed' ? `
+    <div style="margin-top: 16px; text-align: right;">
+      <button id="closeTradeBtn" onclick="closePaperTrade('${trade.position_id}')"
+        style="background: var(--red); color: #fff; border: none; border-radius: 5px; padding: 7px 18px; font-size: 12px; font-weight: 700; cursor: pointer; letter-spacing: 0.5px;">
+        ✕ Close Trade
+      </button>
+    </div>` : ''}
   `;
+}
+
+async function closePaperTrade(positionId) {
+  const btn = document.getElementById('closeTradeBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Closing…'; }
+  try {
+    const res = await fetch('/api/paper/close_trade', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ position_id: positionId }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast(data.message || 'Trade closed', 'success');
+      selectedOpenTrade = null;
+      await fetchOpenTrades();
+    } else {
+      showToast(data.error || 'Failed to close trade', 'error');
+      if (btn) { btn.disabled = false; btn.textContent = '✕ Close Trade'; }
+    }
+  } catch (e) {
+    showToast('Network error closing trade', 'error');
+    if (btn) { btn.disabled = false; btn.textContent = '✕ Close Trade'; }
+  }
 }

@@ -1133,22 +1133,8 @@ def bot_stop():
             capture_output=True, text=True, timeout=10
         )
         if result.returncode == 0:
-            # Disable all pairs when bot is turned off so they are re-evaluated on next start
-            try:
-                all_configs = db.get_all_pair_configs()
-                for cfg in all_configs:
-                    if cfg.get("enabled") == 1:
-                        db.upsert_pair_config(
-                            cfg["pair"], 0,
-                            cfg.get("leverage", 5),
-                            cfg.get("quantity", 0.001),
-                            cfg.get("inr_amount", 300.0)
-                        )
-                db.log_event("INFO", "All pairs disabled on bot stop")
-            except Exception as e:
-                app.logger.warning(f"Disable-all on stop: {e}")
             db.log_event("WARNING", "Bot stopped manually from dashboard")
-            return jsonify({"success": True, "message": "Bot stopped; all pairs disabled"})
+            return jsonify({"success": True, "message": "Bot stopped"})
         return jsonify({"success": False, "message": result.stderr or "Failed"}), 500
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 500
@@ -1330,6 +1316,58 @@ def paper_execute_trade():
         })
     except Exception as e:
         app.logger.exception(f"Manual execute failed: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/paper/close_trade", methods=["POST"])
+def paper_close_trade():
+    """Manually close an open paper trade at the current market price."""
+    try:
+        data = request.get_json() or {}
+        position_id = (data.get("position_id") or "").strip()
+        if not position_id:
+            return jsonify({"success": False, "error": "Missing 'position_id'"}), 400
+
+        open_trades = db.get_open_paper_trades()
+        trade = next((t for t in open_trades if str(t.get("position_id")) == position_id), None)
+        if not trade:
+            return jsonify({"success": False, "error": f"No open paper trade with position_id={position_id}"}), 404
+
+        pair = trade["pair"]
+        client = _get_coindcx_client()
+        candles = client.get_candles(pair, "5m", limit=5)
+        if not candles:
+            return jsonify({"success": False, "error": f"Could not fetch current price for {pair}"}), 500
+        exit_price = float(candles[-1].get("close", candles[-1].get("c", 0)))
+        if not exit_price:
+            return jsonify({"success": False, "error": "Could not determine current price"}), 500
+
+        entry_price = float(trade["entry_price"])
+        quantity = float(trade["quantity"])
+        side = trade["side"]
+        leverage = float(trade.get("leverage", 1))
+
+        if side == "buy":
+            raw_pnl = (exit_price - entry_price) * quantity * leverage
+        else:
+            raw_pnl = (entry_price - exit_price) * quantity * leverage
+
+        exit_fee = exit_price * quantity * TAKER_FEE_RATE
+        net_pnl = raw_pnl - exit_fee
+
+        db.close_paper_trade(position_id, exit_price, net_pnl, exit_fee)
+        wallet = db.get_paper_wallet_balance() or 0.0
+        db.set_paper_wallet_balance(wallet + exit_fee + net_pnl)
+        db.log_event("INFO", f"Manual close PAPER {pair} @ {exit_price} | PnL: {net_pnl:.4f}")
+
+        return jsonify({
+            "success": True,
+            "message": f"Closed {pair} @ {exit_price:.4f} | PnL: {net_pnl:+.4f} USDT",
+            "exit_price": exit_price,
+            "pnl": round(net_pnl, 4),
+        })
+    except Exception as e:
+        app.logger.exception(f"Close paper trade failed: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 
