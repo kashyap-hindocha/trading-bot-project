@@ -215,6 +215,40 @@ if (typeof setInterval !== 'undefined') {
     setInterval(updateNextCloseCountdown, 1000);
 }
 
+async function executeTradeForPair(pair, buttonEl) {
+    if (!pair) return;
+    const origText = buttonEl ? buttonEl.textContent : '';
+    if (buttonEl) {
+        buttonEl.disabled = true;
+        buttonEl.textContent = '…';
+    }
+    try {
+        const res = await fetch(`${API}/api/paper/execute_trade`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pair: pair }),
+        });
+        const data = await res.json();
+        if (data.success) {
+            if (typeof showToast === 'function') showToast(data.message || 'Trade placed', 'success');
+            if (typeof fetchAll === 'function') fetchAll();
+        } else {
+            const msg = data.error || data.message || 'Execute failed';
+            if (typeof showToast === 'function') showToast(msg, 'error');
+            else if (typeof alert === 'function') alert(msg);
+        }
+    } catch (e) {
+        const msg = 'Request failed: ' + (e.message || String(e));
+        if (typeof showToast === 'function') showToast(msg, 'error');
+        else if (typeof alert === 'function') alert(msg);
+    } finally {
+        if (buttonEl) {
+            buttonEl.disabled = false;
+            buttonEl.textContent = origText || 'Execute (paper)';
+        }
+    }
+}
+
 function formatPairSignalsUpdatedAt(iso) {
     if (!iso) return '—';
     try {
@@ -241,7 +275,7 @@ function renderPairList() {
     const pairsToShow = pairSignals.slice(0, 10);
     container.innerHTML = '';
 
-    pairsToShow.forEach(p => {
+    pairsToShow.forEach((p, idx) => {
         const hasError = !!(p.last_error && String(p.last_error).trim());
         const card = document.createElement('div');
         card.style.cssText = `
@@ -263,13 +297,22 @@ function renderPairList() {
         const errText = (p.last_error || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
         const errorIcon = hasError ? `<span class="pair-error-icon" title="${errText}" style="cursor: help; margin-left: 4px; color: rgba(255,80,80,0.9); font-size: 12px;">ⓘ</span>` : '';
         const titleLine = `<div style="font-size: 13px; font-weight: 700; color: var(--accent); margin-bottom: 6px;">${baseCoin}${errorIcon}</div>`;
-
+        const executeBtnId = `execute-${idx}-${(p.pair || '').replace(/[^a-z0-9]/gi, '-')}`;
         card.innerHTML = titleLine + `
       <div style="font-size: 11px; color: var(--gray-1); margin-bottom: 4px;">Confidence: ${signalPct}%</div>
       <div style="height: 4px; background: var(--gray-2); border-radius: 2px; overflow: hidden;">
         <div style="height: 100%; width: ${signalPct}%; background: var(--accent); transition: width 0.3s;"></div>
       </div>${enabledByLine}
+      <button type="button" id="${executeBtnId}" class="pair-execute-btn" style="margin-top: 8px; padding: 4px 8px; font-size: 10px; background: var(--accent); color: var(--gray-3); border: none; border-radius: 4px; cursor: pointer; width: 100%;">Execute (paper)</button>
     `;
+
+        const execBtn = document.getElementById(executeBtnId);
+        if (execBtn) {
+            execBtn.addEventListener('click', function (ev) {
+                ev.stopPropagation();
+                executeTradeForPair(p.pair, execBtn);
+            });
+        }
 
         card.onmouseenter = () => {
             card.style.borderColor = hasError ? 'rgba(255, 80, 80, 0.8)' : 'var(--accent)';
@@ -312,7 +355,7 @@ function renderPairList() {
         // Expand to show all enabled pairs only (pairSignals = current enabled from API)
         while (container.firstChild) container.removeChild(container.firstChild);
 
-        pairSignals.forEach(p => {
+        pairSignals.forEach((p, idx) => {
             const hasError = !!(p.last_error && String(p.last_error).trim());
             const card = document.createElement('div');
             card.style.cssText = `
@@ -332,13 +375,17 @@ function renderPairList() {
             const enabledByLine = (byStrategy && atConf) ? `<div style="font-size: 10px; color: var(--gray-2); margin-top: 6px;">Enabled by ${strategyDisplay} when confidence was ${atConf}%</div>` : '';
             const errText = (p.last_error || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
             const errorIcon = hasError ? `<span title="${errText}" style="cursor: help; margin-left: 4px; color: rgba(255,80,80,0.9); font-size: 12px;">ⓘ</span>` : '';
+            const executeBtnIdExp = `execute-exp-${idx}-${(p.pair || '').replace(/[^a-z0-9]/gi, '-')}`;
             card.innerHTML = `
               <div style="font-size: 13px; font-weight: 700; color: var(--accent); margin-bottom: 6px;">${baseCoin}${errorIcon}</div>
               <div style="font-size: 11px; color: var(--gray-1); margin-bottom: 4px;">Confidence: ${signalPct.toFixed(1)}%</div>
               <div style="height: 4px; background: var(--gray-2); border-radius: 2px; overflow: hidden;">
                 <div style="height: 100%; width: ${signalPct}%; background: var(--accent); transition: width 0.3s;"></div>
               </div>${enabledByLine}
+              <button type="button" id="${executeBtnIdExp}" class="pair-execute-btn" style="margin-top: 8px; padding: 4px 8px; font-size: 10px; background: var(--accent); color: var(--gray-3); border: none; border-radius: 4px; cursor: pointer; width: 100%;">Execute (paper)</button>
             `;
+            const execBtnExp = document.getElementById(executeBtnIdExp);
+            if (execBtnExp) execBtnExp.addEventListener('click', function (ev) { ev.stopPropagation(); executeTradeForPair(p.pair, execBtnExp); });
             card.onmouseenter = () => { card.style.borderColor = hasError ? 'rgba(255, 80, 80, 0.8)' : 'var(--accent)'; card.style.transform = 'translateY(-2px)'; };
             card.onmouseleave = () => { card.style.borderColor = hasError ? 'rgba(255, 80, 80, 0.5)' : 'var(--gray-2)'; card.style.transform = 'translateY(0)'; };
             container.appendChild(card);

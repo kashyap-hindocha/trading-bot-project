@@ -1204,6 +1204,135 @@ def paper_diagnostic():
         return jsonify({"error": str(e)}), 500
 
 
+TAKER_FEE_RATE = 0.0005  # 0.05% for paper trade fee simulation
+
+
+@app.route("/api/paper/execute_trade", methods=["POST"])
+def paper_execute_trade():
+    """Manually execute a paper trade for an enabled pair only. Use to test API/strategy and see errors."""
+    try:
+        data = request.get_json() or {}
+        pair = (data.get("pair") or "").strip()
+        if not pair:
+            return jsonify({"success": False, "error": "Missing 'pair' (e.g. B-OP_USDT)"}), 400
+
+        enabled_pairs = db.get_enabled_pairs()
+        enabled_pair_names = {p.get("pair") for p in enabled_pairs if p.get("pair")}
+        if pair not in enabled_pair_names:
+            return jsonify({"success": False, "error": f"Pair {pair} is not enabled. Enable it first."}), 400
+
+        mode = db.get_trading_mode()
+        if mode != "PAPER":
+            return jsonify({"success": False, "error": "Manual execute is paper-only. Switch mode to PAPER."}), 400
+
+        pair_config = next((c for c in enabled_pairs if c.get("pair") == pair), None)
+        if not pair_config:
+            return jsonify({"success": False, "error": "Pair config not found"}), 400
+
+        client = _get_coindcx_client()
+        candles = client.get_candles(pair, "5m", limit=200)
+        if not candles or len(candles) < 50:
+            return jsonify({"success": False, "error": f"Not enough candles for {pair} (need ≥50)"}), 400
+
+        candles_norm = [
+            {"open": c.get("open", c.get("o")), "high": c.get("high", c.get("h")), "low": c.get("low", c.get("l")),
+             "close": c.get("close", c.get("c")), "volume": c.get("volume", c.get("v", 0)), "time": c.get("time", c.get("t"))}
+            for c in candles
+        ]
+        current_price = float(candles[-1].get("close", candles[-1].get("c", 0)))
+        if not current_price:
+            return jsonify({"success": False, "error": "Could not get current price"}), 400
+
+        enabled_by_strategy = pair_config.get("enabled_by_strategy")
+        strat_instance = _get_strategy_instance(enabled_by_strategy) if enabled_by_strategy else None
+        if not strat_instance and STRATEGY_MANAGER_LOADED:
+            strat_instance = strategy_manager.strategy_manager.get_active_strategy()
+        if not strat_instance:
+            return jsonify({"success": False, "error": "No strategy available for this pair"}), 500
+
+        ev = strat_instance.evaluate(candles_norm, return_confidence=True)
+        if isinstance(ev, dict):
+            signal = ev.get("signal")
+            confidence = float(ev.get("confidence", 0))
+            atr = float(ev.get("atr", 0))
+            position_size = float(ev.get("position_size", 0))
+            trailing_stop = float(ev.get("trailing_stop", 0))
+        else:
+            signal = ev
+            confidence = atr = position_size = trailing_stop = 0.0
+
+        if not signal:
+            return jsonify({
+                "success": False,
+                "message": "No signal from strategy",
+                "confidence": round(confidence, 1),
+            }), 200
+
+        leverage = int(pair_config.get("leverage", 5))
+        quantity = float(pair_config.get("quantity", 0.001))
+        inr_amount = pair_config.get("inr_amount")
+        if inr_amount is not None and inr_amount != "":
+            inr_amount = float(inr_amount)
+        else:
+            inr_amount = None
+        if inr_amount and current_price > 0:
+            rate = client.get_inr_usdt_rate()
+            if rate and rate > 0:
+                usdt_margin = inr_amount / rate
+                quantity = (usdt_margin * leverage) / current_price
+
+        wallet_balance = db.get_paper_wallet_balance()
+        if wallet_balance is None or wallet_balance <= 0:
+            return jsonify({"success": False, "error": "Paper wallet not initialized. Switch to PAPER mode once."}), 400
+        entry_fee = current_price * quantity * TAKER_FEE_RATE
+        if entry_fee > wallet_balance:
+            return jsonify({"success": False, "error": "PAPER wallet insufficient for fee"}), 400
+
+        tp_price, sl_price = strat_instance.calculate_tp_sl(current_price, signal, atr) if strat_instance else (0, 0)
+        side = "buy" if signal == "LONG" else "sell"
+        order_id = f"PAPER-MANUAL-{int(time.time() * 1000)}"
+        position_id = f"PAPER-POS-{order_id}"
+        strategy_key = (pair_config.get("enabled_by_strategy") or (strategy_manager.strategy_manager.get_active_strategy_name() if STRATEGY_MANAGER_LOADED else "")) or "enhanced_v2"
+
+        db.set_paper_wallet_balance(wallet_balance - entry_fee)
+        db.insert_paper_trade(
+            pair=pair,
+            side=side,
+            entry_price=current_price,
+            quantity=quantity,
+            leverage=leverage,
+            tp_price=tp_price,
+            sl_price=sl_price,
+            fee_paid=entry_fee,
+            order_id=order_id,
+            position_id=position_id,
+            strategy_name=strategy_key,
+            strategy_note=f"Manual execute | {signal} | Confidence: {confidence:.1f}%",
+            confidence=confidence,
+            atr=atr,
+            position_size=position_size,
+            trailing_stop=trailing_stop,
+        )
+        db.upsert_pair_execution_status(pair, last_signal=signal, last_confidence=confidence, last_error=None)
+        db.log_event("INFO", f"Manual PAPER entry {pair} {signal} qty={quantity} lev={leverage} | Confidence: {confidence:.1f}%")
+
+        return jsonify({
+            "success": True,
+            "message": f"PAPER {signal} {pair} @ {current_price}",
+            "order_id": order_id,
+            "position_id": position_id,
+            "side": side,
+            "quantity": quantity,
+            "leverage": leverage,
+            "tp_price": tp_price,
+            "sl_price": sl_price,
+            "confidence": round(confidence, 1),
+        })
+    except Exception as e:
+        app.logger.exception(f"Manual execute failed: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 # ── Pair Management ──────────────────────────
 @app.route("/api/pairs/available")
 def pairs_available():

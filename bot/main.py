@@ -713,6 +713,13 @@ def main():
         db.cleanup_bot_log_older_than_days()
     except Exception as e:
         logger.warning(f"Bot log cleanup skipped: {e}")
+
+    # Only run for enabled pairs; exit immediately if this pair is disabled (avoids BTC-only process)
+    if not _is_pair_enabled():
+        logger.warning(f"Pair {PAIR} is not enabled. Exiting. (Bot manager starts one process per enabled pair only.)")
+        db.log_event("INFO", f"Exiting: {PAIR} is not enabled")
+        sys.exit(0)
+
     db.log_event("INFO", "Bot started")
 
     # Seed candles
