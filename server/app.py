@@ -833,7 +833,9 @@ def _run_batch_cycle():
             total_pairs = len(all_pairs)
             total_batches_per_strategy = (total_pairs + BATCH_SIZE - 1) // BATCH_SIZE if total_pairs else 0
             client = _get_coindcx_client()
-            auto_enabled_set = {c["pair"] for c in db.get_auto_enabled_pairs()}
+            # Map pair -> strategy key that enabled it; only disable when THAT strategy says < 75%
+            auto_enabled_list = db.get_auto_enabled_pairs()
+            pair_enabled_by = {c["pair"]: c.get("enabled_by_strategy") for c in auto_enabled_list}
 
             batch_mode = db.get_batch_strategy_mode() or "enhanced_v2"
             if batch_mode == "auto":
@@ -876,11 +878,11 @@ def _run_batch_cycle():
                             if readiness > CONFIDENCE_THRESHOLD:
                                 db.update_pair_auto_status(pair, 1, 1, enabled_by_strategy=strat_key, enabled_at_confidence=readiness)
                                 db.log_event("INFO", f"Auto-enabled {pair} ({strat_key} {readiness:.1f}% > {CONFIDENCE_THRESHOLD}%)")
-                                auto_enabled_set.add(pair)
-                            elif pair in auto_enabled_set and readiness < CONFIDENCE_THRESHOLD:
+                                pair_enabled_by[pair] = strat_key
+                            elif pair_enabled_by.get(pair) == strat_key and readiness < CONFIDENCE_THRESHOLD:
                                 db.update_pair_auto_status(pair, 0, 0, enabled_by_strategy=None, enabled_at_confidence=None)
-                                db.log_event("INFO", f"Auto-disabled {pair} ({strat_key} {readiness:.1f}% < {CONFIDENCE_THRESHOLD}%)")
-                                auto_enabled_set.discard(pair)
+                                db.log_event("INFO", f"Auto-disabled {pair} ({strat_key} {readiness:.1f}% < {CONFIDENCE_THRESHOLD}%, was enabled by this strategy)")
+                                del pair_enabled_by[pair]
                         if batch_start + BATCH_SIZE < total_pairs or strategy_key != strategies_to_run[-1][0]:
                             time.sleep(BATCH_DELAY_SEC)
             else:
@@ -915,11 +917,11 @@ def _run_batch_cycle():
                         if readiness > CONFIDENCE_THRESHOLD:
                             db.update_pair_auto_status(pair, 1, 1, enabled_by_strategy=batch_mode, enabled_at_confidence=readiness)
                             db.log_event("INFO", f"Auto-enabled {pair} ({batch_mode} {readiness:.1f}% > {CONFIDENCE_THRESHOLD}%)")
-                            auto_enabled_set.add(pair)
-                        elif pair in auto_enabled_set and readiness < CONFIDENCE_THRESHOLD:
+                            pair_enabled_by[pair] = batch_mode
+                        elif pair_enabled_by.get(pair) == batch_mode and readiness < CONFIDENCE_THRESHOLD:
                             db.update_pair_auto_status(pair, 0, 0, enabled_by_strategy=None, enabled_at_confidence=None)
                             db.log_event("INFO", f"Auto-disabled {pair} ({batch_mode} {readiness:.1f}% < {CONFIDENCE_THRESHOLD}%)")
-                            auto_enabled_set.discard(pair)
+                            del pair_enabled_by[pair]
                     if batch_start + BATCH_SIZE < total_pairs:
                         time.sleep(BATCH_DELAY_SEC)
 
@@ -1633,84 +1635,73 @@ def pair_signals():
             app.logger.info("No enabled pairs found. Pairs are auto-enabled when confidence > 75%.")
             return jsonify([])
         
-        # Import strategy to calculate signal strength
-        try:
-            import strategy
-        except Exception as e:
-            app.logger.error(f"Failed to import strategy: {e}")
-            return jsonify({"error": "Strategy module not available"}), 500
-        
         client = CoinDCXREST("", "")
         results = []
-        
-        # Get active strategy config for interval
-        active_strategy = None
-        interval = "5m"  # default
-        try:
-            if STRATEGY_MANAGER_LOADED:
-                active_strategy = strategy_manager.strategy_manager.get_active_strategy()
-                if active_strategy:
-                    interval = active_strategy.get_config().get("interval", "5m")
-        except Exception:
-            pass
-        
-        # Process only enabled pairs (limit to 10 max for performance)
-        # This keeps response time under 20 seconds
         pairs_to_process = enabled_pairs[:10]
-        app.logger.info(f"Processing {len(pairs_to_process)} enabled pairs for signal strength")
-        
+        app.logger.info(f"Processing {len(pairs_to_process)} enabled pairs (confidence from enabling strategy)")
+
         for idx, pair_config in enumerate(pairs_to_process, 1):
             pair = pair_config.get("pair")
             if not pair:
                 continue
-            
+            enabled_by_strategy = pair_config.get("enabled_by_strategy")
+            # Use the strategy that enabled this pair for confidence; fallback to active strategy for interval
+            strat_instance = _get_strategy_instance(enabled_by_strategy) if enabled_by_strategy else None
+            if not strat_instance and STRATEGY_MANAGER_LOADED:
+                strat_instance = strategy_manager.strategy_manager.get_active_strategy()
+            interval = "5m"
+            if strat_instance:
+                interval = strat_instance.get_config().get("interval", "5m")
+
             try:
-                # Fetch candles for this pair
                 app.logger.debug(f"[{idx}/{len(pairs_to_process)}] Fetching candles for {pair}")
-                candles = client.get_candles(pair, interval, limit=150)
-                
+                candles = client.get_candles(pair, interval, limit=200)
                 if not candles or len(candles) < 50:
                     results.append({
                         "pair": pair,
-                        "signal_strength": 0.0,
+                        "signal_strength": float(pair_config.get("enabled_at_confidence") or 0),
                         "enabled": pair_config.get("enabled", 0),
                         "leverage": pair_config.get("leverage", 5),
                         "quantity": pair_config.get("quantity", 0.001),
                         "inr_amount": pair_config.get("inr_amount", 300.0),
-                        "enabled_by_strategy": pair_config.get("enabled_by_strategy"),
+                        "enabled_by_strategy": enabled_by_strategy,
                         "enabled_at_confidence": pair_config.get("enabled_at_confidence"),
                     })
                     continue
-                
-                # Calculate signal strength
-                signal_strength = strategy.calculate_signal_strength(candles)
-                
+
+                candles_norm = [{"open": c.get("open"), "high": c.get("high"), "low": c.get("low"), "close": c.get("close"), "volume": c.get("volume", 0), "time": c.get("time")} for c in candles]
+                if strat_instance:
+                    ev = strat_instance.evaluate(candles_norm, return_confidence=True)
+                    confidence = float(ev.get("confidence", 0)) if isinstance(ev, dict) else 0.0
+                else:
+                    confidence = float(pair_config.get("enabled_at_confidence") or 0)
+
                 results.append({
                     "pair": pair,
-                    "signal_strength": signal_strength,
+                    "signal_strength": round(confidence, 1),
                     "enabled": pair_config.get("enabled", 0),
                     "leverage": pair_config.get("leverage", 5),
                     "quantity": pair_config.get("quantity", 0.001),
                     "inr_amount": pair_config.get("inr_amount", 300.0),
-                    "enabled_by_strategy": pair_config.get("enabled_by_strategy"),
+                    "enabled_by_strategy": enabled_by_strategy,
                     "enabled_at_confidence": pair_config.get("enabled_at_confidence"),
                     "last_price": candles[-1].get("close") if candles else None
                 })
-                app.logger.debug(f"[{idx}/{len(pairs_to_process)}] {pair}: signal={signal_strength:.1f}%")
+                app.logger.debug(f"[{idx}/{len(pairs_to_process)}] {pair}: confidence={confidence:.1f}% ({enabled_by_strategy or 'active'})")
             except Exception as e:
-                app.logger.warning(f"Signal strength calculation failed for {pair}: {e}")
+                app.logger.warning(f"Confidence calculation failed for {pair}: {e}")
                 results.append({
                     "pair": pair,
-                    "signal_strength": 0.0,
+                    "signal_strength": float(pair_config.get("enabled_at_confidence") or 0),
                     "enabled": pair_config.get("enabled", 0),
                     "leverage": pair_config.get("leverage", 5),
                     "quantity": pair_config.get("quantity", 0.001),
                     "inr_amount": pair_config.get("inr_amount", 300.0),
-                    "enabled_by_strategy": pair_config.get("enabled_by_strategy"),
+                    "enabled_by_strategy": enabled_by_strategy,
                     "enabled_at_confidence": pair_config.get("enabled_at_confidence"),
                 })
-        
-        # Sort by signal strength (highest first)
+
+        # Sort by current confidence (signal_strength) highest first
         results.sort(key=lambda x: x["signal_strength"], reverse=True)
         
         app.logger.info(f"Pair signals ready: {len(results)} pairs, top signal: {results[0]['signal_strength']:.1f}% ({results[0]['pair']})" if results else "No pairs processed")

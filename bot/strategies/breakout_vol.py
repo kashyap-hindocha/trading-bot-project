@@ -53,6 +53,7 @@ class BreakoutVolStrategy(TradingStrategy):
         "max_open_trades":    3,
         "auto_execute":       True,
         "confidence_threshold": 80.0,
+        "cooldown_minutes":   0,
 
         # ── Bollinger Bands ───────────────────────────────────────────
         "bb_period":          20,

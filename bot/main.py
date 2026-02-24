@@ -69,6 +69,36 @@ TAKER_FEE_RATE = 0.0005  # 0.05% taker fee
 candle_buffer: list[dict] = []
 BUFFER_SIZE = 200
 
+# Prevent duplicate execution on the same closed candle (e.g. duplicate WebSocket events)
+_last_executed_candle_ts: str | None = None
+
+# Retry config for transient API failures
+_API_RETRIES = 3
+_API_BACKOFF_BASE = 1.0
+
+
+def _retry_api(callable_fn, is_ok=lambda r: isinstance(r, dict) and "error" not in r):
+    """Run callable up to _API_RETRIES times with exponential backoff on transient failure (error in result or exception)."""
+    last_result = None
+    for attempt in range(_API_RETRIES):
+        try:
+            result = callable_fn()
+            last_result = result
+            if is_ok(result):
+                return result
+            err = result.get("error", "") if isinstance(result, dict) else ""
+            code = result.get("status_code") if isinstance(result, dict) else None
+            if code and 400 <= code < 500 and code != 429:
+                return result
+        except Exception as e:
+            last_result = {"error": str(e)}
+            logger.warning(f"API call failed (attempt {attempt + 1}/{_API_RETRIES}): {e}")
+        if attempt < _API_RETRIES - 1:
+            wait = _API_BACKOFF_BASE * (2 ** attempt)
+            logger.info(f"Retrying in {wait:.1f}s...")
+            time.sleep(wait)
+    return last_result
+
 
 # ─────────────────────────────────────────────
 #  Candle handling
@@ -206,20 +236,58 @@ def _check_paper_positions(candle: dict):
     db.set_paper_wallet_balance(wallet_balance)
 
 
-# ── Strategy execution
+# ── Strategy execution (uses the strategy that enabled this pair, or active strategy)
 # ─────────────────────────────────────────────
+def _get_strategy_for_pair():
+    """Use the strategy that enabled this pair (enabled_by_strategy) for execution; else active strategy."""
+    pair_config = _get_pair_config()
+    enabled_by = (pair_config or {}).get("enabled_by_strategy")
+    if enabled_by:
+        strat = strategy_manager.strategy_manager.get_strategy_instance(enabled_by)
+        if strat:
+            return strat
+    return strategy_manager.strategy_manager.get_active_strategy()
+
+
 def _run_strategy(current_price: float):
+    global _last_executed_candle_ts
     mode = _get_trading_mode()
+
+    # Duplicate execution guard: do not run twice for the same closed candle
+    if candle_buffer:
+        closed_candle_ts = candle_buffer[-1].get("timestamp") or ""
+        if closed_candle_ts and closed_candle_ts == _last_executed_candle_ts:
+            logger.debug(f"Skip execution for {PAIR}: already executed for candle {closed_candle_ts}")
+            return
 
     # Check max open trades limit PER-PAIR (not total across all pairs)
     open_trades = db.get_open_paper_trades() if mode == "PAPER" else db.get_open_trades()
     pair_open_trades = [t for t in open_trades if t.get("pair") == PAIR]
-    active_strategy = strategy_manager.strategy_manager.get_active_strategy()
-    max_open_trades = active_strategy.get_config().get("max_open_trades", 1) if active_strategy else 1
+    strategy_for_pair = _get_strategy_for_pair()
+    max_open_trades = strategy_for_pair.get_config().get("max_open_trades", 1) if strategy_for_pair else 1
     if len(pair_open_trades) >= max_open_trades:
         return
 
-    result = strategy_manager.strategy_manager.evaluate(candle_buffer, return_confidence=True)
+    # Re-entry cooldown: optional minutes to wait after last closed trade before opening again (0 = allow immediate re-entry)
+    strategy_config = strategy_for_pair.get_config() if strategy_for_pair else {}
+    cooldown_minutes = strategy_config.get("cooldown_minutes", 0)
+    if cooldown_minutes and cooldown_minutes > 0:
+        last_closed = db.get_last_closed_trade_closed_at(PAIR, paper=(mode == "PAPER"))
+        if last_closed:
+            try:
+                from datetime import datetime, timezone
+                closed_dt = datetime.fromisoformat(last_closed.replace("Z", "+00:00"))
+                if closed_dt.tzinfo is None:
+                    closed_dt = closed_dt.replace(tzinfo=timezone.utc)
+                now = datetime.now(timezone.utc)
+                elapsed_min = (now - closed_dt).total_seconds() / 60.0
+                if elapsed_min < cooldown_minutes:
+                    logger.info(f"Skip execution for {PAIR}: re-entry cooldown ({elapsed_min:.1f}m < {cooldown_minutes}m)")
+                    return
+            except Exception as e:
+                logger.warning(f"Cooldown check failed: {e}")
+
+    result = strategy_for_pair.evaluate(candle_buffer, return_confidence=True) if strategy_for_pair else None
     
     # Handle both old format (string) and new format (dict)
     if isinstance(result, dict):
@@ -248,18 +316,24 @@ def _run_strategy(current_price: float):
         logger.info(f"Signal rejected: auto_execute=False (confidence {confidence:.1f}% below threshold)")
         return
 
+    # Mark this candle as "execution attempted" so duplicate WebSocket events don't double-place
+    if candle_buffer:
+        _last_executed_candle_ts = candle_buffer[-1].get("timestamp") or ""
+
     try:
         if mode == "PAPER":
             _run_paper_trade(current_price, signal, confidence, atr, position_size, trailing_stop)
             return
 
         side       = "buy" if signal == "LONG" else "sell"
-        order_type = "market_order"
-        
-        # Get pair-specific config from database, fallback to strategy defaults
+        # Limit order at current price: avoid paying more (buy) or receiving less (sell) than current price.
+        order_type = "limit_order"
+        limit_price = round(float(current_price), 4)
+
+        # Get pair-specific config from database; use same strategy that enabled this pair for TP/SL and config
         pair_config = _get_pair_config()
-        active_strategy = strategy_manager.strategy_manager.get_active_strategy()
-        strategy_config = active_strategy.get_config() if active_strategy else {}
+        strategy_for_pair = _get_strategy_for_pair()
+        strategy_config = strategy_for_pair.get_config() if strategy_for_pair else {}
         
         quantity, leverage, inr_amount, inr_rate = _resolve_trade_sizing(current_price, pair_config, strategy_config)
 
@@ -270,10 +344,14 @@ def _run_strategy(current_price: float):
         else:
             logger.info(f"Using config for {PAIR}: leverage={leverage}x, quantity={quantity} | Position: {signal}")
 
-        # Place entry order
-        order = rest.place_order(PAIR, side, order_type, quantity, leverage=leverage)
+        # Place entry order as limit at current price (with retry on transient API failures)
+        order = _retry_api(lambda: rest.place_order(PAIR, side, order_type, quantity, price=limit_price, leverage=leverage))
+        if not order or order.get("error"):
+            logger.error(f"Order placement failed after retries: {order}")
+            db.log_event("ERROR", f"Order placement failed for {PAIR}: {order}")
+            return
         order_id = order.get("id", "")
-        logger.info(f"Entry order placed: {order_id} | {signal} position | Auto-execute: {auto_execute}")
+        logger.info(f"Entry order placed: {order_id} | {signal} limit @ {limit_price} | Auto-execute: {auto_execute}")
 
         # Try to get position ID from order response first
         position_id = order.get("position_id", "")
@@ -311,16 +389,22 @@ def _run_strategy(current_price: float):
                 logger.error(f"Failed to get position ID after {max_retries} retries")
                 db.log_event("ERROR", f"Failed to get position ID for order {order_id}")
 
-        # Calculate TP/SL
-        active_strategy = strategy_manager.strategy_manager.get_active_strategy()
-        tp_price, sl_price = active_strategy.calculate_tp_sl(current_price, signal, atr) if active_strategy else (0, 0)
+        # Calculate TP/SL using the strategy that enabled this pair (same as evaluate)
+        strategy_for_pair = _get_strategy_for_pair()
+        tp_price, sl_price = strategy_for_pair.calculate_tp_sl(current_price, signal, atr) if strategy_for_pair else (0, 0)
 
-        # Place TP/SL
+        # Place TP/SL (with retry on transient API failures)
         if position_id:
-            rest.place_tp_sl(PAIR, position_id, tp_price, sl_price)
-            logger.info(f"TP={tp_price} SL={sl_price} Trailing Stop={trailing_stop:.2f} set for {signal} position {position_id}")
+            tp_sl_result = _retry_api(lambda: rest.place_tp_sl(PAIR, position_id, tp_price, sl_price))
+            if tp_sl_result and not tp_sl_result.get("error"):
+                logger.info(f"TP={tp_price} SL={sl_price} Trailing Stop={trailing_stop:.2f} set for {signal} position {position_id}")
+            else:
+                logger.warning(f"TP/SL placement failed (position {position_id}): {tp_sl_result}; position remains open")
+                db.log_event("WARNING", f"TP/SL failed for {PAIR} position {position_id}")
 
         # Save to DB
+        pair_cfg = _get_pair_config()
+        strategy_key = (pair_cfg or {}).get("enabled_by_strategy") or strategy_manager.strategy_manager.get_active_strategy_name()
         db.insert_trade(
             pair=PAIR,
             side=side,
@@ -331,7 +415,8 @@ def _run_strategy(current_price: float):
             sl_price=sl_price,
             order_id=order_id,
             position_id=position_id,
-            strategy_note=f"{active_strategy.get_name() if active_strategy else 'Unknown'} signal {signal} | Confidence: {confidence:.1f}% | Auto-execute: {auto_execute}",
+            strategy_name=strategy_key or "enhanced_v2",
+            strategy_note=f"{strategy_for_pair.get_name() if strategy_for_pair else 'Unknown'} signal {signal} | Confidence: {confidence:.1f}% | Auto-execute: {auto_execute}",
             confidence=confidence,
             atr=atr,
             position_size=position_size,
@@ -347,8 +432,8 @@ def _run_paper_trade(current_price: float, signal: str, confidence: float = 0.0,
                      atr: float = 0.0, position_size: float = 0.0, trailing_stop: float = 0.0):
     side = "buy" if signal == "LONG" else "sell"
     pair_config = _get_pair_config()
-    active_strategy = strategy_manager.strategy_manager.get_active_strategy()
-    strategy_config = active_strategy.get_config() if active_strategy else None
+    strategy_for_pair = _get_strategy_for_pair()
+    strategy_config = strategy_for_pair.get_config() if strategy_for_pair else None
     quantity, leverage, inr_amount, inr_rate = _resolve_trade_sizing(current_price, pair_config, strategy_config)
 
     wallet_balance = db.get_paper_wallet_balance()
@@ -357,8 +442,8 @@ def _run_paper_trade(current_price: float, signal: str, confidence: float = 0.0,
         db.log_event("WARNING", "PAPER wallet not initialized or empty")
         return
 
-    # Calculate TP/SL
-    tp_price, sl_price = active_strategy.calculate_tp_sl(current_price, signal, atr) if active_strategy else (0, 0)
+    # Calculate TP/SL using the strategy that enabled this pair
+    tp_price, sl_price = strategy_for_pair.calculate_tp_sl(current_price, signal, atr) if strategy_for_pair else (0, 0)
 
     # Simulate order placement
     order_id = f"PAPER-{int(time.time() * 1000)}"
@@ -372,6 +457,7 @@ def _run_paper_trade(current_price: float, signal: str, confidence: float = 0.0,
 
     db.set_paper_wallet_balance(wallet_balance - entry_fee)
 
+    strategy_key = (pair_config or {}).get("enabled_by_strategy") or strategy_manager.strategy_manager.get_active_strategy_name()
     db.insert_paper_trade(
         pair=PAIR,
         side=side,
@@ -383,7 +469,8 @@ def _run_paper_trade(current_price: float, signal: str, confidence: float = 0.0,
         fee_paid=entry_fee,
         order_id=order_id,
         position_id=position_id,
-        strategy_note=f"{active_strategy.get_name() if active_strategy else 'Unknown'} signal {signal} | Confidence: {confidence:.1f}%",
+        strategy_name=strategy_key or "enhanced_v2",
+        strategy_note=f"{strategy_for_pair.get_name() if strategy_for_pair else 'Unknown'} signal {signal} | Confidence: {confidence:.1f}%",
         confidence=confidence,
         atr=atr,
         position_size=position_size,

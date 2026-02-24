@@ -5,6 +5,7 @@ SQLite database — stores all trades, positions, and bot events.
 import sqlite3
 import json
 from datetime import datetime
+from typing import Optional
 
 DB_PATH = "/home/ubuntu/trading-bot/data/bot.db"
 
@@ -219,6 +220,18 @@ def get_open_trades():
     rows = conn.execute("SELECT * FROM trades WHERE status='open'").fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def get_last_closed_trade_closed_at(pair: str, paper: bool = False) -> Optional[str]:
+    """Return closed_at (ISO str) of the most recent closed trade for this pair, or None. Used for re-entry cooldown."""
+    conn = get_conn()
+    table = "paper_trades" if paper else "trades"
+    row = conn.execute(
+        f"SELECT closed_at FROM {table} WHERE pair=? AND status='closed' ORDER BY closed_at DESC LIMIT 1",
+        (pair,),
+    ).fetchone()
+    conn.close()
+    return row["closed_at"] if row and row["closed_at"] else None
 
 
 def get_all_trades(limit=100):

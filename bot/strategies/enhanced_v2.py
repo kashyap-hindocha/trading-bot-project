@@ -44,6 +44,7 @@ class EnhancedStrategyV2(TradingStrategy):
         "max_open_trades":    3,
         "auto_execute":       True,
         "confidence_threshold": 80.0,
+        "cooldown_minutes":   0,            # 0 = allow re-entry as soon as position closes; set >0 to wait before re-opening
 
         # ── EMA ───────────────────────────────────────────────────────
         "ema_fast":           9,
