@@ -1,5 +1,6 @@
 import sys
 import os
+import re
 import json
 sys.path.insert(0, '/home/ubuntu/trading-bot/bot')
 
@@ -1781,19 +1782,55 @@ def pair_signals():
 # Allowed path for bot log (no user-controlled paths)
 BOT_LOG_PATH = "/home/ubuntu/trading-bot/data/bot.log"
 
+# Match Python logging asctime: "2026-02-24 16:55:32,123" or "2026-02-24 16:55:32"
+_BOT_LOG_TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})(?:[,.](\d+))?")
+
+
+def _parse_log_timestamp(line):
+    """Return (datetime_comparable, line). Lines without timestamp get (max, line) so they sort last."""
+    m = _BOT_LOG_TS_RE.match(line)
+    if not m:
+        return (float("inf"), line)
+    date_part, ms = m.group(1), m.group(2)
+    try:
+        # Build iso format for parsing
+        ts_str = date_part.replace(" ", "T") + (f".{ms.ljust(3, '0')[:3]}" if ms else ".000")
+        dt = datetime.fromisoformat(ts_str)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return (dt.timestamp(), line)
+    except Exception:
+        return (float("inf"), line)
+
 
 @app.route("/api/bot_logs")
 def bot_logs():
-    """Return last N lines of bot.log so the dashboard can show recent execution logs."""
+    """Return last N lines of bot.log, sorted by timestamp, so the dashboard shows chronological execution logs."""
     try:
-        n = request.args.get("n", 150, type=int)
-        n = min(max(1, n), 500)
+        n = request.args.get("n", 200, type=int)
+        n = min(max(1, n), 1000)
+        filter_exec = request.args.get("filter") == "execution"
         if not os.path.isfile(BOT_LOG_PATH):
             return jsonify({"lines": [], "path": BOT_LOG_PATH, "error": "Log file not found"})
         with open(BOT_LOG_PATH, "r", encoding="utf-8", errors="replace") as f:
             all_lines = f.readlines()
-        lines = all_lines[-n:] if len(all_lines) > n else all_lines
-        return jsonify({"lines": [line.rstrip("\n") for line in lines], "path": BOT_LOG_PATH})
+        # Take more lines if we'll filter, then trim to n after filter/sort
+        to_take = min(len(all_lines), n * 4 if filter_exec else n)
+        lines = [line.rstrip("\n") for line in all_lines[-to_take:]]
+        if filter_exec:
+            keywords = (
+                "Closed candle", "Signal:", "PAPER entry", "Signal rejected", "Execution allowed",
+                "wallet not initialized", "Skip execution", "Max open trades", "Per-pair limit",
+                "No signal from strategy", "Paper trade failed", "PAPER entry skipped", "insufficient for fee",
+                "Re-entry cooldown", "No strategy"
+            )
+            lines = [ln for ln in lines if any(kw in ln for kw in keywords)]
+        # Sort by parsed timestamp so multiple bot processes don't appear out of order
+        parsed = [_parse_log_timestamp(ln) for ln in lines]
+        parsed.sort(key=lambda x: x[0])
+        sorted_lines = [ln for _, ln in parsed]
+        sorted_lines = sorted_lines[-n:] if len(sorted_lines) > n else sorted_lines
+        return jsonify({"lines": sorted_lines, "path": BOT_LOG_PATH})
     except Exception as e:
         app.logger.error(f"Error reading bot logs: {e}")
         return jsonify({"error": str(e)}), 500

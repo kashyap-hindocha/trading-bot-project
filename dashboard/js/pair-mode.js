@@ -353,25 +353,42 @@ function renderPairList() {
     }
 }
 
-// Recent bot logs modal (file tail from /api/bot_logs)
+// Recent bot logs modal (file tail from /api/bot_logs, sorted by time; optional execution-only filter)
+async function fetchBotLogs(filterExecution) {
+    const q = new URLSearchParams({ n: 300 });
+    if (filterExecution) q.set('filter', 'execution');
+    const res = await fetch(`${API}/api/bot_logs?${q}`);
+    return res.json();
+}
 async function showBotLogsModal() {
     const modal = document.getElementById('botLogsModal');
     const content = document.getElementById('botLogsModalContent');
+    const hint = document.getElementById('botLogsModalHint');
+    const filterCb = document.getElementById('botLogsFilterExecution');
     if (!modal || !content) return;
     content.textContent = 'Loading…';
+    if (hint) hint.textContent = '';
     modal.style.display = 'flex';
     modal.style.alignItems = 'center';
     modal.style.justifyContent = 'center';
+    const filterExecution = !!(filterCb && filterCb.checked);
     try {
-        const res = await fetch(`${API}/api/bot_logs?n=200`);
-        const data = await res.json();
+        const data = await fetchBotLogs(filterExecution);
         if (data.error) {
             content.textContent = 'Error: ' + data.error;
             return;
         }
         const lines = data.lines || [];
-        content.textContent = lines.length ? lines.join('\n') : '(no log lines)';
+        content.textContent = lines.length ? lines.join('\n') : '(no matching lines)';
         content.scrollTop = content.scrollHeight;
+        if (hint) {
+            if (filterExecution && lines.length === 0)
+                hint.textContent = 'No execution lines found. Bot may not be receiving closed candles from the exchange (check WebSocket). Look for "Closed candle" in full logs.';
+            else if (filterExecution)
+                hint.textContent = 'Showing only: Closed candle, Signal:, PAPER entry, Signal rejected, Skip execution, errors. Uncheck to see all logs.';
+            else
+                hint.textContent = 'Logs are sorted by timestamp. Use the checkbox to show only execution-related lines.';
+        }
     } catch (e) {
         content.textContent = 'Failed to load logs: ' + e.message;
     }
@@ -387,5 +404,7 @@ document.addEventListener('DOMContentLoaded', function () {
     if (closeBtn) closeBtn.addEventListener('click', closeBotLogsModal);
     const modal = document.getElementById('botLogsModal');
     if (modal) modal.addEventListener('click', function (e) { if (e.target === modal) closeBotLogsModal(); });
+    const filterCb = document.getElementById('botLogsFilterExecution');
+    if (filterCb) filterCb.addEventListener('change', function () { if (document.getElementById('botLogsModal').style.display === 'flex') showBotLogsModal(); });
 });
 
