@@ -207,7 +207,7 @@ function renderPairList() {
         const errorIcon = hasError ? `<span class="pair-error-icon" title="${errText}" style="cursor: help; margin-left: 4px; color: rgba(255,80,80,0.9); font-size: 12px;">ⓘ</span>` : '';
         const titleLine = `<div style="font-size: 13px; font-weight: 700; color: var(--accent); margin-bottom: 6px;">${baseCoin}${errorIcon}</div>`;
         card.innerHTML = titleLine + `
-      <div style="font-size: 11px; color: var(--gray-1); margin-bottom: 4px;">Confidence: ${signalPct}%</div>
+      <div style="font-size: 11px; color: var(--gray-1); margin-bottom: 4px;" title="From bot's last run at 5m candle close">Confidence: ${signalPct}%</div>
       <div style="height: 4px; background: var(--gray-2); border-radius: 2px; overflow: hidden;">
         <div style="height: 100%; width: ${signalPct}%; background: var(--accent); transition: width 0.3s;"></div>
       </div>${enabledByLine}
@@ -286,7 +286,7 @@ function renderPairList() {
             const errorIcon = hasError ? `<span title="${errText}" style="cursor: help; margin-left: 4px; color: rgba(255,80,80,0.9); font-size: 12px;">ⓘ</span>` : '';
             card.innerHTML = `
               <div style="font-size: 13px; font-weight: 700; color: var(--accent); margin-bottom: 6px;">${baseCoin}${errorIcon}</div>
-              <div style="font-size: 11px; color: var(--gray-1); margin-bottom: 4px;">Confidence: ${signalPct.toFixed(1)}%</div>
+              <div style="font-size: 11px; color: var(--gray-1); margin-bottom: 4px;" title="From bot's last run at 5m candle close">Confidence: ${signalPct.toFixed(1)}%</div>
               <div style="height: 4px; background: var(--gray-2); border-radius: 2px; overflow: hidden;">
                 <div style="height: 100%; width: ${signalPct}%; background: var(--accent); transition: width 0.3s;"></div>
               </div>${enabledByLine}

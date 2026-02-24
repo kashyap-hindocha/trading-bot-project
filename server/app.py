@@ -1863,6 +1863,8 @@ def pair_signals():
                         exec_status = db.get_pair_execution_status_all().get(pair, {})
                         out["last_closed_at"] = exec_status.get("last_closed_at")
                         out["last_error"] = exec_status.get("last_error")
+                        if exec_status.get("last_confidence") is not None:
+                            out["signal_strength"] = round(float(exec_status["last_confidence"]), 1)
                     except Exception:
                         pass
                     results.append(out)
@@ -1891,10 +1893,13 @@ def pair_signals():
                     out["last_closed_at"] = exec_status.get("last_closed_at")
                     out["last_error"] = exec_status.get("last_error")
                     out["last_signal"] = exec_status.get("last_signal")
+                    # Prefer bot's last-run confidence so UI matches why trade did/didn't run
+                    if exec_status.get("last_confidence") is not None:
+                        out["signal_strength"] = round(float(exec_status["last_confidence"]), 1)
                 except Exception:
                     pass
                 results.append(out)
-                app.logger.debug(f"[{idx}/{len(pairs_to_process)}] {pair}: confidence={confidence:.1f}% ({enabled_by_strategy or 'active'})")
+                app.logger.debug(f"[{idx}/{len(pairs_to_process)}] {pair}: confidence={out['signal_strength']:.1f}% ({enabled_by_strategy or 'active'})")
             except Exception as e:
                 app.logger.warning(f"Confidence calculation failed for {pair}: {e}")
                 out = {
@@ -1911,6 +1916,8 @@ def pair_signals():
                     exec_status = db.get_pair_execution_status_all().get(pair, {})
                     out["last_closed_at"] = exec_status.get("last_closed_at")
                     out["last_error"] = exec_status.get("last_error")
+                    if exec_status.get("last_confidence") is not None:
+                        out["signal_strength"] = round(float(exec_status["last_confidence"]), 1)
                 except Exception:
                     pass
                 results.append(out)

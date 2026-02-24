@@ -382,9 +382,9 @@ def _run_strategy(current_price: float):
         trailing_stop = 0.0
 
     if not signal:
-        logger.debug(f"Skip execution for {PAIR}: no signal from strategy")
+        logger.debug(f"Skip execution for {PAIR}: no signal from strategy (confidence {confidence:.1f}%)")
         try:
-            db.upsert_pair_execution_status(PAIR, last_error="No signal from strategy")
+            db.upsert_pair_execution_status(PAIR, last_confidence=confidence, last_error="No signal from strategy")
         except Exception:
             pass
         return
@@ -403,7 +403,7 @@ def _run_strategy(current_price: float):
         err = f"Signal rejected: confidence {confidence:.1f}% below threshold"
         logger.info(f"Signal rejected for {PAIR}: {err}")
         try:
-            db.upsert_pair_execution_status(PAIR, last_error=err)
+            db.upsert_pair_execution_status(PAIR, last_confidence=confidence, last_error=err)
         except Exception:
             pass
         return
