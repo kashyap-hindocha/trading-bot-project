@@ -106,12 +106,29 @@ def _retry_api(callable_fn, is_ok=lambda r: isinstance(r, dict) and "error" not 
 # ─────────────────────────────────────────────
 #  Candle handling
 # ─────────────────────────────────────────────
+def _normalize_candle(raw: dict) -> dict:
+    """Normalize REST or WebSocket candle to {open, high, low, close, volume, timestamp}."""
+    ts = raw.get("timestamp") or raw.get("t") or raw.get("time") or ""
+    return {
+        "open":      float(raw.get("open", raw.get("o", 0))),
+        "high":      float(raw.get("high", raw.get("h", 0))),
+        "low":       float(raw.get("low", raw.get("l", 0))),
+        "close":     float(raw.get("close", raw.get("c", 0))),
+        "volume":    float(raw.get("volume", raw.get("v", 0))),
+        "timestamp": str(ts),
+        "is_closed": raw.get("is_closed", raw.get("x", True)),  # REST candles are closed
+    }
+
+
 def _seed_candles():
     """Load historical candles on startup so indicators have data immediately."""
     global candle_buffer
     logger.info(f"Seeding candles for {PAIR} {INTERVAL}...")
-    candles = rest.get_candles(PAIR, INTERVAL, limit=BUFFER_SIZE)
-    candle_buffer = candles[-BUFFER_SIZE:]
+    raw_candles = rest.get_candles(PAIR, INTERVAL, limit=BUFFER_SIZE)
+    if raw_candles:
+        candle_buffer = [_normalize_candle(c) for c in raw_candles[-BUFFER_SIZE:]]
+    else:
+        candle_buffer = []
     logger.info(f"Seeded {len(candle_buffer)} candles")
 
 
@@ -622,6 +639,51 @@ def _equity_snapshot_loop():
 
 
 # ─────────────────────────────────────────────
+#  5m timer fallback when WebSocket doesn't send closed candles
+# ─────────────────────────────────────────────
+def _seconds_until_next_5m_utc():
+    """Seconds until next 5m boundary (UTC)."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    sec = now.timestamp()
+    return 300 - (int(sec) % 300) - (sec % 1)
+
+
+def _run_on_5m_timer():
+    """Run strategy at each 5m boundary using REST last-closed candle (fallback when WS has no closed flag)."""
+    from datetime import datetime, timezone
+    while True:
+        try:
+            wait = _seconds_until_next_5m_utc()
+            # Slight delay past boundary so exchange has closed candle available
+            time.sleep(wait + 3)
+            raw_list = rest.get_candles(PAIR, INTERVAL, limit=5)
+            if not raw_list or len(raw_list) < 2:
+                logger.warning(f"5m timer: not enough candles from REST for {PAIR}")
+                continue
+            # Last closed = second-to-last (newest is often still open)
+            closed_raw = raw_list[-2]
+            candle = _normalize_candle(closed_raw)
+            candle["is_closed"] = True
+            global candle_buffer
+            if candle_buffer and candle_buffer[-1].get("timestamp") == candle["timestamp"]:
+                candle_buffer[-1] = candle
+            else:
+                candle_buffer.append(candle)
+                if len(candle_buffer) > BUFFER_SIZE:
+                    candle_buffer.pop(0)
+            logger.info(f"Closed candle for {PAIR} at {candle['close']}, running strategy (5m timer fallback)")
+            try:
+                db.upsert_pair_execution_status(PAIR, last_closed_at=datetime.now(timezone.utc).isoformat(), last_error=None)
+            except Exception:
+                pass
+            _check_paper_positions(candle)
+            _run_strategy(candle["close"])
+        except Exception as e:
+            logger.exception(f"5m timer fallback failed for {PAIR}: {e}")
+
+
+# ─────────────────────────────────────────────
 #  Main
 # ─────────────────────────────────────────────
 def main():
@@ -638,6 +700,11 @@ def main():
     # Start equity snapshot thread
     t = threading.Thread(target=_equity_snapshot_loop, daemon=True)
     t.start()
+
+    # Start 5m timer fallback so we run strategy even when WebSocket doesn't send closed candles
+    timer_thread = threading.Thread(target=_run_on_5m_timer, daemon=True)
+    timer_thread.start()
+    logger.info("5m timer fallback started (runs strategy at each 5m close using REST)")
 
     # Register socket callbacks
     socket.on("candlestick", on_candlestick)
