@@ -300,9 +300,22 @@ def get_equity_history(limit=200):
 
 
 # ── Bot log ──────────────────────────────────
+BOT_LOG_RETENTION_DAYS = 2  # Keep only last 2 days (trade histories in trades/paper_trades are kept)
+
+
 def log_event(level: str, message: str):
     conn = get_conn()
     conn.execute("INSERT INTO bot_log (level, message) VALUES (?,?)", (level, message))
+    conn.commit()
+    conn.close()
+
+
+def cleanup_bot_log_older_than_days(days: int = None):
+    """Delete bot_log entries older than the given days (default BOT_LOG_RETENTION_DAYS). Trade histories are not touched."""
+    if days is None:
+        days = BOT_LOG_RETENTION_DAYS
+    conn = get_conn()
+    conn.execute("DELETE FROM bot_log WHERE created_at < datetime('now', ?)", (f"-{days} days",))
     conn.commit()
     conn.close()
 

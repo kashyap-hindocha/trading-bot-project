@@ -1787,25 +1787,46 @@ _BOT_LOG_TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})(?:[,.](\d+)
 
 
 def _parse_log_timestamp(line):
-    """Return (datetime_comparable, line). Lines without timestamp get (max, line) so they sort last."""
+    """Return (timestamp, line). Log asctime is local time; we use naive datetime so 2-day filter matches."""
     m = _BOT_LOG_TS_RE.match(line)
     if not m:
         return (float("inf"), line)
     date_part, ms = m.group(1), m.group(2)
     try:
-        # Build iso format for parsing
         ts_str = date_part.replace(" ", "T") + (f".{ms.ljust(3, '0')[:3]}" if ms else ".000")
         dt = datetime.fromisoformat(ts_str)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
         return (dt.timestamp(), line)
     except Exception:
         return (float("inf"), line)
 
 
+def _log_line_to_ist(line: str) -> str:
+    """Replace leading log timestamp with IST (UTC+5:30). Log timestamp is in server local time."""
+    m = _BOT_LOG_TS_RE.match(line)
+    if not m:
+        return line
+    date_part, ms = m.group(1), m.group(2)
+    try:
+        ts_str = date_part.replace(" ", "T") + (f".{ms.ljust(3, '0')[:3]}" if ms else ".000")
+        dt_naive = datetime.fromisoformat(ts_str)
+        # Python logging asctime uses server local time; convert to IST for display
+        local_tz = datetime.now().astimezone().tzinfo
+        dt_local = dt_naive.replace(tzinfo=local_tz) if local_tz else dt_naive.replace(tzinfo=timezone.utc)
+        dt_ist = dt_local.astimezone(IST)
+        ms_part = f",{ms.ljust(3, '0')[:3]}" if ms else ",000"
+        ist_prefix = dt_ist.strftime("%Y-%m-%d %H:%M:%S") + ms_part
+        return ist_prefix + line[m.end():]
+    except Exception:
+        return line
+
+
+# Keep only logs from the last 2 days (trade histories are in DB and kept separately)
+BOT_LOG_RETENTION_DAYS = 2
+
+
 @app.route("/api/bot_logs")
 def bot_logs():
-    """Return last N lines of bot.log, sorted by timestamp, so the dashboard shows chronological execution logs."""
+    """Return last N lines of bot.log, newest first (desc), only lines from the last 2 days."""
     try:
         n = request.args.get("n", 200, type=int)
         n = min(max(1, n), 1000)
@@ -1814,9 +1835,7 @@ def bot_logs():
             return jsonify({"lines": [], "path": BOT_LOG_PATH, "error": "Log file not found"})
         with open(BOT_LOG_PATH, "r", encoding="utf-8", errors="replace") as f:
             all_lines = f.readlines()
-        # Take more lines if we'll filter, then trim to n after filter/sort
-        to_take = min(len(all_lines), n * 4 if filter_exec else n)
-        lines = [line.rstrip("\n") for line in all_lines[-to_take:]]
+        lines = [line.rstrip("\n") for line in all_lines]
         if filter_exec:
             keywords = (
                 "Closed candle", "Signal:", "PAPER entry", "Signal rejected", "Execution allowed",
@@ -1825,11 +1844,15 @@ def bot_logs():
                 "Re-entry cooldown", "No strategy"
             )
             lines = [ln for ln in lines if any(kw in ln for kw in keywords)]
-        # Sort by timestamp ascending (oldest first, newest last) so recent logs are at the end
+        # Parse timestamps and keep only last 2 days (use local time to match log asctime)
+        cutoff = (datetime.now() - timedelta(days=BOT_LOG_RETENTION_DAYS)).timestamp()
         parsed = [_parse_log_timestamp(ln) for ln in lines]
-        parsed.sort(key=lambda x: x[0])
-        sorted_lines = [ln for _, ln in parsed]
-        sorted_lines = sorted_lines[-n:] if len(sorted_lines) > n else sorted_lines
+        parsed = [(ts, ln) for ts, ln in parsed if ts != float("inf") and ts >= cutoff]
+        # Sort descending (newest first)
+        parsed.sort(key=lambda x: x[0], reverse=True)
+        sorted_lines = [ln for _, ln in parsed[:n]]
+        # Convert timestamps to IST for display
+        sorted_lines = [_log_line_to_ist(ln) for ln in sorted_lines]
         return jsonify({"lines": sorted_lines, "path": BOT_LOG_PATH})
     except Exception as e:
         app.logger.error(f"Error reading bot logs: {e}")

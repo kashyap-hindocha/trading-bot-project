@@ -380,19 +380,15 @@ async function showBotLogsModal() {
         }
         const lines = data.lines || [];
         content.textContent = lines.length ? lines.join('\n') : '(no matching lines)';
-        // Asc order: oldest at top, newest at bottom; scroll to bottom so recent logs are visible without manual scroll
-        function scrollToBottom() {
-            content.scrollTop = content.scrollHeight;
-        }
-        requestAnimationFrame(scrollToBottom);
-        setTimeout(scrollToBottom, 50);
+        // API returns newest first (desc); keep scroll at top so recent logs are visible
+        content.scrollTop = 0;
         if (hint) {
             if (filterExecution && lines.length === 0)
                 hint.textContent = 'No execution lines found. Bot may not be receiving closed candles from the exchange (check WebSocket). Look for "Closed candle" in full logs.';
             else if (filterExecution)
                 hint.textContent = 'Showing only: Closed candle, Signal:, PAPER entry, Signal rejected, Skip execution, errors. Uncheck to see all logs.';
             else
-                hint.textContent = 'Logs are sorted by timestamp. Use the checkbox to show only execution-related lines.';
+                hint.textContent = 'Timestamps in IST. Newest first. Last 2 days. Use the checkbox to show only execution-related lines.';
         }
     } catch (e) {
         content.textContent = 'Failed to load logs: ' + e.message;

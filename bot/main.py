@@ -27,17 +27,19 @@ from coindcx import CoinDCXREST, CoinDCXSocket
 load_dotenv("/home/ubuntu/trading-bot/.env")
 
 # ── Logging ──────────────────────────────────
-from logging.handlers import RotatingFileHandler
+# Keep only last 2 days of log files (trade histories stay in DB)
+from logging.handlers import TimedRotatingFileHandler
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
         logging.StreamHandler(),
-        RotatingFileHandler(
+        TimedRotatingFileHandler(
             "/home/ubuntu/trading-bot/data/bot.log",
-            maxBytes=10*1024*1024,  # 10MB
-            backupCount=5  # Keep 5 backup files
+            when="midnight",
+            interval=1,
+            backupCount=2,  # current + 2 days = ~2 days retention
         ),
     ],
 )
@@ -707,6 +709,10 @@ def main():
     # Init DB
     os.makedirs("/home/ubuntu/trading-bot/data", exist_ok=True)
     db.init_db()
+    try:
+        db.cleanup_bot_log_older_than_days()
+    except Exception as e:
+        logger.warning(f"Bot log cleanup skipped: {e}")
     db.log_event("INFO", "Bot started")
 
     # Seed candles

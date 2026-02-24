@@ -11,6 +11,7 @@ import signal
 import logging
 import subprocess
 from pathlib import Path
+from logging.handlers import TimedRotatingFileHandler
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import db
@@ -20,7 +21,12 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler("/home/ubuntu/trading-bot/data/bot_manager.log"),
+        TimedRotatingFileHandler(
+            "/home/ubuntu/trading-bot/data/bot_manager.log",
+            when="midnight",
+            interval=1,
+            backupCount=2,
+        ),
     ],
 )
 logger = logging.getLogger(__name__)

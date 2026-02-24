@@ -135,6 +135,27 @@ cd ~/trading-bot
 ./deploy.sh
 ```
 
+## After each deployment: restart commands
+
+**These two commands are enough** (and `deploy.sh` already runs them):
+
+```bash
+systemctl --user restart server.service
+systemctl --user restart bot.service
+```
+
+If services are installed system-wide (under `/etc/systemd/system/`), use:
+
+```bash
+sudo systemctl restart server
+sudo systemctl restart bot
+```
+
+- **Server** runs the Flask API (dashboard, pair signals, logs).
+- **Bot** runs `bot_manager.py`, which starts **one** `main.py` process **per enabled pair** only. Do not run `main.py` directly; the manager handles which pairs are active.
+
+**Auto-restart:** Both `server.service` and `bot.service` use `Restart=always` and `RestartSec=5`/`10`, so they restart automatically if they crash. No extra commands are needed for that.
+
 ## Optional: Deploy to Specific Branch
 
 To deploy from different branches, modify `.github/workflows/deploy.yml`:
