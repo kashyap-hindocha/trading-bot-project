@@ -156,6 +156,22 @@ sudo systemctl restart bot
 
 **Auto-restart:** Both `server.service` and `bot.service` use `Restart=always` and `RestartSec=5`/`10`, so they restart automatically if they crash. No extra commands are needed for that.
 
+### Bot fails with "No pair argument provided"
+
+This means `main.py` is being run **directly** (with no pair). The service must run **bot_manager.py**, not `main.py`. On the server, check:
+
+```bash
+# See what the bot service actually runs
+sudo systemctl cat bot.service | grep ExecStart
+```
+
+You must see `bot/bot_manager.py`. If you see `bot/main.py`, fix the unit file (copy `bot.service` from the repo so it uses `bot/bot_manager.py`), then:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart bot
+```
+
 ## Optional: Deploy to Specific Branch
 
 To deploy from different branches, modify `.github/workflows/deploy.yml`:

@@ -7,6 +7,7 @@ Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/trading-bot
 Environment=PATH=/home/ubuntu/trading-bot/venv/bin
+# MUST run bot_manager.py (not main.py). The manager spawns one main.py <PAIR> per enabled pair.
 ExecStart=/home/ubuntu/trading-bot/venv/bin/python bot/bot_manager.py
 Restart=always
 RestartSec=10

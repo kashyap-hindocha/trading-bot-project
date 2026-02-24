@@ -46,15 +46,18 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ── Parse command-line arguments ─────────────
-# bot_manager spawns: python main.py <PAIR>  (e.g. B-ETH_USDT)
-# Running without a pair argument is not supported and will exit immediately.
+# Only bot_manager.py should run this script: python main.py <PAIR>
+# Do not run main.py directly; use systemctl start bot (which runs bot_manager.py).
 INTERVAL = "5m"
 
 # Multi-pair only: bot_manager starts one main.py per enabled pair. Global cap below applies across all pairs.
 MAX_TOTAL_OPEN_TRADES = 3  # Max 3 open trades at a time (any combination of pairs)
 
 if len(sys.argv) < 2:
-    logger.error("Usage: python main.py <PAIR>  (e.g. B-ETH_USDT). No pair argument provided — exiting.")
+    logger.error(
+        "No pair argument provided. Do not run main.py directly. "
+        "Start the bot service instead: systemctl start bot — it runs bot_manager.py, which starts one main.py <PAIR> per enabled pair."
+    )
     sys.exit(1)
 
 PAIR = sys.argv[1]
