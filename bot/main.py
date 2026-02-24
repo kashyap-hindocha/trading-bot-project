@@ -152,8 +152,10 @@ def _update_candle(data: dict):
         if len(candle_buffer) > BUFFER_SIZE:
             candle_buffer.pop(0)
 
-    # Only evaluate strategy on closed candles
+    # Only evaluate strategy on closed candles, and only for enabled pairs
     if candle["is_closed"]:
+        if not _is_pair_enabled():
+            return
         logger.info(f"Closed candle for {PAIR} at {candle['close']}, running strategy")
         try:
             from datetime import datetime, timezone
@@ -170,6 +172,17 @@ def _get_pair_config():
         return next((c for c in all_configs if c["pair"] == PAIR), None)
     except Exception:
         return None
+
+
+def _is_pair_enabled() -> bool:
+    """True only if this pair is currently enabled (candle close / strategy run only for enabled pairs)."""
+    try:
+        cfg = _get_pair_config()
+        if cfg is None:
+            return False
+        return cfg.get("enabled", 0) == 1
+    except Exception:
+        return False
 
 
 def _get_trading_mode() -> str:
@@ -650,13 +663,15 @@ def _seconds_until_next_5m_utc():
 
 
 def _run_on_5m_timer():
-    """Run strategy at each 5m boundary using REST last-closed candle (fallback when WS has no closed flag)."""
+    """Run strategy at each 5m boundary using REST last-closed candle (fallback when WS has no closed flag). Only for enabled pairs."""
     from datetime import datetime, timezone
     while True:
         try:
             wait = _seconds_until_next_5m_utc()
-            # Slight delay past boundary so exchange has closed candle available
             time.sleep(wait + 3)
+            # Only check candle close and run strategy for enabled pairs
+            if not _is_pair_enabled():
+                continue
             raw_list = rest.get_candles(PAIR, INTERVAL, limit=5)
             if not raw_list or len(raw_list) < 2:
                 logger.warning(f"5m timer: not enough candles from REST for {PAIR}")

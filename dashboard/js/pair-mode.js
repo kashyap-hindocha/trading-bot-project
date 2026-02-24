@@ -380,7 +380,12 @@ async function showBotLogsModal() {
         }
         const lines = data.lines || [];
         content.textContent = lines.length ? lines.join('\n') : '(no matching lines)';
-        content.scrollTop = content.scrollHeight;
+        // Asc order: oldest at top, newest at bottom; scroll to bottom so recent logs are visible without manual scroll
+        function scrollToBottom() {
+            content.scrollTop = content.scrollHeight;
+        }
+        requestAnimationFrame(scrollToBottom);
+        setTimeout(scrollToBottom, 50);
         if (hint) {
             if (filterExecution && lines.length === 0)
                 hint.textContent = 'No execution lines found. Bot may not be receiving closed candles from the exchange (check WebSocket). Look for "Closed candle" in full logs.';

@@ -1825,7 +1825,7 @@ def bot_logs():
                 "Re-entry cooldown", "No strategy"
             )
             lines = [ln for ln in lines if any(kw in ln for kw in keywords)]
-        # Sort by parsed timestamp so multiple bot processes don't appear out of order
+        # Sort by timestamp ascending (oldest first, newest last) so recent logs are at the end
         parsed = [_parse_log_timestamp(ln) for ln in lines]
         parsed.sort(key=lambda x: x[0])
         sorted_lines = [ln for _, ln in parsed]
