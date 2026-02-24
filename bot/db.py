@@ -124,8 +124,10 @@ def init_db():
     if "strategy_name" not in trade_cols:
         c.execute("ALTER TABLE trades ADD COLUMN strategy_name TEXT DEFAULT 'enhanced_v2'")
     
-    # Add new strategy metric columns to paper_trades table
+    # Add new strategy metric columns to paper_trades table (for DBs created before these columns existed)
     paper_cols = {row[1] for row in c.execute("PRAGMA table_info(paper_trades)").fetchall()}
+    if "confidence" not in paper_cols:
+        c.execute("ALTER TABLE paper_trades ADD COLUMN confidence REAL DEFAULT 0.0")
     if "atr" not in paper_cols:
         c.execute("ALTER TABLE paper_trades ADD COLUMN atr REAL DEFAULT 0.0")
     if "position_size" not in paper_cols:
@@ -615,20 +617,19 @@ def get_pair_mode() -> dict:
 
 
 def set_pair_mode(mode: str, selected_pair: str = None):
-    """Set pair mode (SINGLE/MULTI) and optionally selected pair for SINGLE mode."""
+    """Set pair mode. Only MULTI is used: one bot process per enabled pair, max 3 open trades total."""
     mode = mode.upper()
-    if mode not in ("SINGLE", "MULTI"):
-        raise ValueError(f"Invalid pair_mode: {mode}. Must be SINGLE or MULTI.")
-    
+    if mode == "SINGLE":
+        mode = "MULTI"
     conn = get_conn()
     conn.execute("""
         INSERT INTO bot_config (id, pair_mode, selected_pair, updated_at)
-        VALUES (1, ?, ?, datetime('now'))
+        VALUES (1, ?, NULL, datetime('now'))
         ON CONFLICT(id) DO UPDATE SET
             pair_mode=excluded.pair_mode,
-            selected_pair=excluded.selected_pair,
+            selected_pair=NULL,
             updated_at=datetime('now')
-    """, (mode, selected_pair))
+    """, (mode,))
     conn.commit()
     conn.close()
 

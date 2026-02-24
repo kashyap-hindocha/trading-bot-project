@@ -1758,35 +1758,18 @@ def trades_by_pair():
 
 @app.route("/api/pair_mode", methods=["GET", "POST"])
 def pair_mode():
-    """Get or set pair trading mode (SINGLE/MULTI) and selected pair."""
+    """Pair mode is MULTI only: one process per enabled pair, max 3 open trades total."""
     if request.method == "GET":
-        try:
-            mode_data = db.get_pair_mode()
-            return jsonify(mode_data)
-        except Exception as e:
-            app.logger.error(f"Error getting pair mode: {e}")
-            return jsonify({"pair_mode": "MULTI", "selected_pair": None})
+        return jsonify({"pair_mode": "MULTI", "selected_pair": None})
     
-    # POST - Set pair mode
+    # POST - Accept for compatibility; always store MULTI
     try:
         data = request.get_json() or {}
         mode = str(data.get("pair_mode", "MULTI")).upper()
-        selected_pair = data.get("selected_pair")
-        
-        if mode not in ("SINGLE", "MULTI"):
-            return jsonify({"error": "pair_mode must be SINGLE or MULTI"}), 400
-        
-        if mode == "SINGLE" and not selected_pair:
-            return jsonify({"error": "selected_pair is required for SINGLE mode"}), 400
-        
-        db.set_pair_mode(mode, selected_pair)
-        db.log_event("INFO", f"Pair mode set to {mode}" + (f" with pair {selected_pair}" if selected_pair else ""))
-        
-        return jsonify({
-            "success": True,
-            "pair_mode": mode,
-            "selected_pair": selected_pair
-        })
+        if mode == "SINGLE":
+            mode = "MULTI"
+        db.set_pair_mode(mode, None)
+        return jsonify({"success": True, "pair_mode": "MULTI", "selected_pair": None})
     except Exception as e:
         app.logger.error(f"Error setting pair mode: {e}")
         return jsonify({"error": str(e)}), 500

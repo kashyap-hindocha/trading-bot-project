@@ -3,22 +3,10 @@
    ════════════════════════════════════════════════════════════════ */
 
 // Load current pair mode from API
-async function loadPairMode() {
-    try {
-        const res = await fetch(`${API}/api/pair_mode`);
-        const data = await res.json();
-
-        pairMode = data.pair_mode || 'MULTI';
-        selectedSinglePair = data.selected_pair;
-
-        // Update UI
-        updatePairModeUI();
-
-        // Populate pair selector with available pairs
-        populatePairModeSelector();
-    } catch (err) {
-        console.error('Failed to load pair mode:', err);
-    }
+function loadPairMode() {
+    pairMode = 'MULTI';
+    selectedSinglePair = null;
+    updatePairModeUI();
 }
 
 // Populate the pair selector dropdown with all available pairs
@@ -39,115 +27,37 @@ function populatePairModeSelector() {
     });
 }
 
-// Set pair mode (SINGLE or MULTI)
-async function setPairMode(mode) {
-    try {
-        // If switching to SINGLE and no pair selected, auto-select first pair
-        if (mode === 'SINGLE' && !selectedSinglePair && allPairs && allPairs.length > 0) {
-            selectedSinglePair = allPairs[0].pair;
-            const selector = document.getElementById('pairSelector');
-            if (selector) {
-                selector.value = selectedSinglePair;
-            }
-        }
-
-        const payload = {
-            pair_mode: mode,
-            selected_pair: mode === 'SINGLE' ? selectedSinglePair : null
-        };
-
-        const res = await fetch(`${API}/api/pair_mode`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-
-        if (!res.ok) {
-            const error = await res.json();
-            showToast(error.error || 'Failed to set pair mode', 'error');
-            return;
-        }
-
-        pairMode = mode;
-        updatePairModeUI();
-        showToast(`Switched to ${mode} mode`, 'success');
-    } catch (err) {
-        console.error('Failed to set pair mode:', err);
-        showToast('Failed to set pair mode', 'error');
-    }
+function setPairMode(mode) {
+    pairMode = 'MULTI';
+    updatePairModeUI();
 }
 
-// Handle pair selection (for SINGLE mode)
-async function onPairSelect() {
+function onPairSelect() {
     const selector = document.getElementById('pairSelector');
-    if (!selector) return;
-
-    selectedSinglePair = selector.value;
-
-    if (!selectedSinglePair) return;
-
-    try {
-        const res = await fetch(`${API}/api/pair_mode`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                pair_mode: 'SINGLE',
-                selected_pair: selectedSinglePair
-            })
-        });
-
-        if (!res.ok) {
-            const error = await res.json();
-            showToast(error.error || 'Failed to select pair', 'error');
-            return;
-        }
-
-        pairMode = 'SINGLE';
-        updatePairModeUI();
-        showToast(`Now trading ${selectedSinglePair}`, 'success');
-    } catch (err) {
-        console.error('Failed to select pair:', err);
-        showToast('Failed to select pair', 'error');
-    }
+    if (selector && selector.value) selectedSinglePair = selector.value;
+    updatePairModeUI();
 }
 
-// Update pair mode UI elements
+// Update pair mode UI (MULTI only: all enabled pairs, max 3 open)
 function updatePairModeUI() {
     const singleBtn = document.getElementById('pairModeSingle');
     const multiBtn = document.getElementById('pairModeMulti');
     const selectorContainer = document.getElementById('pairSelectorContainer');
     const statusDiv = document.getElementById('pairModeStatus');
-
-    if (!singleBtn || !multiBtn || !selectorContainer || !statusDiv) return;
-
-    // Update button states
-    if (pairMode === 'SINGLE') {
-        singleBtn.style.background = 'var(--accent)';
-        singleBtn.style.color = '#000';
-        singleBtn.style.fontWeight = '700';
-        singleBtn.style.borderColor = 'var(--accent)';
-
-        multiBtn.style.background = 'var(--gray-3)';
-        multiBtn.style.color = 'var(--text)';
-        multiBtn.style.fontWeight = '400';
-        multiBtn.style.borderColor = 'var(--gray-2)';
-
-        selectorContainer.style.display = 'block';
-        statusDiv.textContent = selectedSinglePair ? `Trading ${selectedSinglePair}` : 'Select a pair';
-    } else {
+    if (multiBtn) {
         multiBtn.style.background = 'var(--accent)';
         multiBtn.style.color = '#000';
         multiBtn.style.fontWeight = '700';
         multiBtn.style.borderColor = 'var(--accent)';
-
+    }
+    if (singleBtn) {
         singleBtn.style.background = 'var(--gray-3)';
         singleBtn.style.color = 'var(--text)';
         singleBtn.style.fontWeight = '400';
         singleBtn.style.borderColor = 'var(--gray-2)';
-
-        selectorContainer.style.display = 'none';
-        statusDiv.textContent = 'Trading ALL enabled pairs';
     }
+    if (selectorContainer) selectorContainer.style.display = 'none';
+    if (statusDiv) statusDiv.textContent = 'Trading ALL enabled pairs (max 3 open)';
 }
 
 // Load and render pair signals (for horizontal Trading Pairs section)
@@ -169,7 +79,6 @@ async function loadPairSignals() {
         pairSignals = Array.isArray(data) ? data : (data.pairs || []);
         pairSignalsUpdatedAt = data.updated_at || null;
 
-        // Populate pair selector for SINGLE mode
         populatePairModeSelector();
 
         // Render the horizontal pair cards

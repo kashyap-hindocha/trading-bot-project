@@ -49,8 +49,8 @@ logger = logging.getLogger(__name__)
 PAIR     = "B-BTC_USDT"  # Default pair
 INTERVAL = "5m"
 
-# Max total open trades across all pairs; when one closes, the next signal can open (so up to 3 at a time).
-MAX_TOTAL_OPEN_TRADES = 3
+# Multi-pair only: bot_manager starts one main.py per enabled pair. Global cap below applies across all pairs.
+MAX_TOTAL_OPEN_TRADES = 3  # Max 3 open trades at a time (any combination of pairs)
 
 if len(sys.argv) > 1:
     # Allow overriding pair from command line: python main.py B-ETH_USDT
