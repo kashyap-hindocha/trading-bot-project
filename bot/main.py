@@ -266,14 +266,18 @@ def _run_strategy(current_price: float):
     # Global cap: only allow up to MAX_TOTAL_OPEN_TRADES (e.g. 3) open at once; when one closes, next can take its place
     open_trades = db.get_open_paper_trades() if mode == "PAPER" else db.get_open_trades()
     if len(open_trades) >= MAX_TOTAL_OPEN_TRADES:
-        logger.debug(f"Skip execution for {PAIR}: max open trades reached ({len(open_trades)}/{MAX_TOTAL_OPEN_TRADES})")
+        logger.info(f"Skip execution for {PAIR}: max open trades reached ({len(open_trades)}/{MAX_TOTAL_OPEN_TRADES})")
         return
 
     # Per-pair limit (from strategy config; e.g. 1 per pair so we don’t stack multiple on same pair)
     pair_open_trades = [t for t in open_trades if t.get("pair") == PAIR]
     strategy_for_pair = _get_strategy_for_pair()
-    max_open_trades = strategy_for_pair.get_config().get("max_open_trades", 1) if strategy_for_pair else 1
+    if not strategy_for_pair:
+        logger.warning(f"Skip execution for {PAIR}: no strategy (enabled_by_strategy not found or invalid)")
+        return
+    max_open_trades = strategy_for_pair.get_config().get("max_open_trades", 1)
     if len(pair_open_trades) >= max_open_trades:
+        logger.debug(f"Skip execution for {PAIR}: per-pair limit ({len(pair_open_trades)}/{max_open_trades})")
         return
 
     # Re-entry cooldown: optional minutes to wait after last closed trade before opening again (0 = allow immediate re-entry)
@@ -295,8 +299,8 @@ def _run_strategy(current_price: float):
             except Exception as e:
                 logger.warning(f"Cooldown check failed: {e}")
 
-    result = strategy_for_pair.evaluate(candle_buffer, return_confidence=True) if strategy_for_pair else None
-    
+    result = strategy_for_pair.evaluate(candle_buffer, return_confidence=True)
+
     # Handle both old format (string) and new format (dict)
     if isinstance(result, dict):
         signal = result.get("signal")
@@ -312,16 +316,23 @@ def _run_strategy(current_price: float):
         atr = 0.0
         position_size = 0.0
         trailing_stop = 0.0
-    
+
     if not signal:
+        logger.debug(f"Skip execution for {PAIR}: no signal from strategy")
         return
+
+    # Allow execution if (a) strategy says auto_execute, or (b) pair was enabled at >=80% and confidence at candle close >= 75%
+    pair_config = _get_pair_config()
+    enabled_at_conf = (pair_config or {}).get("enabled_at_confidence")
+    if not auto_execute and confidence >= 75.0 and enabled_at_conf is not None and float(enabled_at_conf) >= 80.0:
+        auto_execute = True
+        logger.info(f"Execution allowed for {PAIR}: confidence {confidence:.1f}% at close, pair was enabled at {enabled_at_conf}%")
 
     logger.info(f"Signal: {signal} at price {current_price} | Confidence: {confidence:.1f}% | ATR: {atr:.4f} | Position Size: {position_size:.6f} | Trailing Stop: {trailing_stop:.2f} | Auto-execute: {auto_execute}")
     db.log_event("INFO", f"Signal {signal} at {current_price} for {PAIR} | Confidence: {confidence:.1f}% | ATR: {atr:.4f} | Trailing Stop: {trailing_stop:.2f}%")
 
-    # Check auto-execute flag - only proceed if confidence meets threshold
     if not auto_execute:
-        logger.info(f"Signal rejected: auto_execute=False (confidence {confidence:.1f}% below threshold)")
+        logger.info(f"Signal rejected for {PAIR}: auto_execute=False (confidence {confidence:.1f}% below strategy threshold)")
         return
 
     # Mark this candle as "execution attempted" so duplicate WebSocket events don't double-place
@@ -446,8 +457,8 @@ def _run_paper_trade(current_price: float, signal: str, confidence: float = 0.0,
 
     wallet_balance = db.get_paper_wallet_balance()
     if wallet_balance is None or wallet_balance <= 0:
-        logger.warning("PAPER wallet not initialized or empty")
-        db.log_event("WARNING", "PAPER wallet not initialized or empty")
+        logger.warning(f"PAPER entry skipped for {PAIR}: wallet not initialized or empty (balance={wallet_balance}). Switch to PAPER mode in dashboard to initialize.")
+        db.log_event("WARNING", "PAPER wallet not initialized or empty - switch to PAPER mode to initialize")
         return
 
     # Calculate TP/SL using the strategy that enabled this pair
