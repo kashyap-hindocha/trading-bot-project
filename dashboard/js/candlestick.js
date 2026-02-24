@@ -186,13 +186,22 @@ function connectChartSocket() {
     chartSocket = null;
   }
   chartSocket = io(baseUrl, { path: '/socket.io', transports: ['websocket', 'polling'] });
+  let connectErrorLogged = false;
   chartSocket.on('connect', () => {
     chartLiveConnected = true;
+    connectErrorLogged = false;
     subscribeChartCandles();
     const el = document.getElementById('candleInfo');
     if (el && selectedCandlePair) {
       const baseCoin = selectedCandlePair.replace('B-', '').replace('_USDT', '');
       if (el.textContent.indexOf('LIVE') === -1) el.textContent += ' ● LIVE';
+    }
+  });
+  chartSocket.on('connect_error', () => {
+    chartLiveConnected = false;
+    if (!connectErrorLogged) {
+      connectErrorLogged = true;
+      console.warn('Chart live socket unavailable (chart uses REST fallback). Manual Execute and trades do not need it.');
     }
   });
   chartSocket.on('disconnect', () => {
