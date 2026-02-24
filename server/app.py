@@ -1671,7 +1671,10 @@ def pair_signals():
         
         if not enabled_pairs:
             app.logger.info("No enabled pairs found. Pairs are auto-enabled when confidence > 75%.")
-            return jsonify([])
+            return jsonify({
+                "pairs": [],
+                "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            })
         
         client = CoinDCXREST("", "")
         results = []
@@ -1766,9 +1769,33 @@ def pair_signals():
         
         app.logger.info(f"Pair signals ready: {len(results)} pairs, top signal: {results[0]['signal_strength']:.1f}% ({results[0]['pair']})" if results else "No pairs processed")
         
-        return jsonify(results)
+        return jsonify({
+            "pairs": results,
+            "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        })
     except Exception as e:
         app.logger.error(f"Error fetching pair signals: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+# Allowed path for bot log (no user-controlled paths)
+BOT_LOG_PATH = "/home/ubuntu/trading-bot/data/bot.log"
+
+
+@app.route("/api/bot_logs")
+def bot_logs():
+    """Return last N lines of bot.log so the dashboard can show recent execution logs."""
+    try:
+        n = request.args.get("n", 150, type=int)
+        n = min(max(1, n), 500)
+        if not os.path.isfile(BOT_LOG_PATH):
+            return jsonify({"lines": [], "path": BOT_LOG_PATH, "error": "Log file not found"})
+        with open(BOT_LOG_PATH, "r", encoding="utf-8", errors="replace") as f:
+            all_lines = f.readlines()
+        lines = all_lines[-n:] if len(all_lines) > n else all_lines
+        return jsonify({"lines": [line.rstrip("\n") for line in lines], "path": BOT_LOG_PATH})
+    except Exception as e:
+        app.logger.error(f"Error reading bot logs: {e}")
         return jsonify({"error": str(e)}), 500
 
 

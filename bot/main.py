@@ -293,7 +293,12 @@ def _run_strategy(current_price: float):
         return
     max_open_trades = strategy_for_pair.get_config().get("max_open_trades", 1)
     if len(pair_open_trades) >= max_open_trades:
-        logger.debug(f"Skip execution for {PAIR}: per-pair limit ({len(pair_open_trades)}/{max_open_trades})")
+        err = f"Per-pair limit ({len(pair_open_trades)}/{max_open_trades})"
+        logger.debug(f"Skip execution for {PAIR}: {err}")
+        try:
+            db.upsert_pair_execution_status(PAIR, last_error=err)
+        except Exception:
+            pass
         return
 
     # Re-entry cooldown: optional minutes to wait after last closed trade before opening again (0 = allow immediate re-entry)
@@ -371,11 +376,19 @@ def _run_strategy(current_price: float):
 
     try:
         if mode == "PAPER":
-            _run_paper_trade(current_price, signal, confidence, atr, position_size, trailing_stop)
             try:
-                db.upsert_pair_execution_status(PAIR, last_signal=signal, last_confidence=confidence, last_error=None)
-            except Exception:
-                pass
+                _run_paper_trade(current_price, signal, confidence, atr, position_size, trailing_stop)
+                try:
+                    db.upsert_pair_execution_status(PAIR, last_signal=signal, last_confidence=confidence, last_error=None)
+                except Exception:
+                    pass
+            except Exception as e:
+                err = f"Paper trade failed: {e}"
+                logger.exception(f"PAPER entry failed for {PAIR}: {e}")
+                try:
+                    db.upsert_pair_execution_status(PAIR, last_error=err)
+                except Exception:
+                    pass
             return
 
         side       = "buy" if signal == "LONG" else "sell"
@@ -509,8 +522,13 @@ def _run_paper_trade(current_price: float, signal: str, confidence: float = 0.0,
     entry_fee = current_price * quantity * TAKER_FEE_RATE
 
     if entry_fee > wallet_balance:
-        logger.warning("PAPER wallet insufficient for fee")
+        err = "PAPER wallet insufficient for fee"
+        logger.warning(f"PAPER entry skipped for {PAIR}: {err}")
         db.log_event("WARNING", "PAPER wallet insufficient for fee")
+        try:
+            db.upsert_pair_execution_status(PAIR, last_error=err)
+        except Exception:
+            pass
         return
 
     db.set_paper_wallet_balance(wallet_balance - entry_fee)

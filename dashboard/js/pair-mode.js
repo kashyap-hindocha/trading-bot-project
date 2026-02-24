@@ -159,14 +159,15 @@ async function loadPairSignals() {
         const fetchTime = ((Date.now() - startTime) / 1000).toFixed(1);
         
         if (!res.ok) {
-            console.warn('Pair signals request failed, retrying in 7 seconds...');
-            setTimeout(loadPairSignals, 7000);
+            console.warn('Pair signals request failed, retrying in 5 seconds...');
+            setTimeout(loadPairSignals, 5000);
             return;
         }
 
         const data = await res.json();
-        // API returns a plain array; handle both array and {pairs:[]} formats
+        // API returns { pairs, updated_at }; support legacy array format
         pairSignals = Array.isArray(data) ? data : (data.pairs || []);
+        pairSignalsUpdatedAt = data.updated_at || null;
 
         // Populate pair selector for SINGLE mode
         populatePairModeSelector();
@@ -186,12 +187,12 @@ async function loadPairSignals() {
             refreshCandleInfo();
         }
         
-        console.debug(`Pair signals loaded in ${fetchTime}s, scheduling next call in 7s`);
+        console.debug(`Pair signals loaded in ${fetchTime}s, scheduling next in 5s`);
     } catch (err) {
         console.error('Failed to load pair signals:', err);
     } finally {
-        // Schedule next call 7 seconds after response received
-        setTimeout(loadPairSignals, 7000);
+        // Refresh every 5s so confidence and execution status stay current
+        setTimeout(loadPairSignals, 5000);
     }
 }
 
@@ -214,9 +215,21 @@ if (typeof setInterval !== 'undefined') {
     setInterval(updateNextCloseCountdown, 1000);
 }
 
+function formatPairSignalsUpdatedAt(iso) {
+    if (!iso) return '—';
+    try {
+        const d = new Date(iso);
+        if (isNaN(d.getTime())) return iso;
+        return d.toLocaleTimeString();
+    } catch (_) { return iso; }
+}
+
 // Render horizontal pair list — ONLY currently enabled pairs (from pair_signals API)
 function renderPairList() {
     updateNextCloseCountdown();
+    const updatedEl = document.getElementById('pairSignalsLastUpdated');
+    if (updatedEl && typeof pairSignalsUpdatedAt !== 'undefined')
+        updatedEl.textContent = 'Updated: ' + formatPairSignalsUpdatedAt(pairSignalsUpdatedAt);
     const container = document.getElementById('pairSignalsContainer');
     if (!container) return;
 
@@ -300,11 +313,12 @@ function renderPairList() {
         while (container.firstChild) container.removeChild(container.firstChild);
 
         pairSignals.forEach(p => {
+            const hasError = !!(p.last_error && String(p.last_error).trim());
             const card = document.createElement('div');
             card.style.cssText = `
               padding: 12px 16px;
-              background: var(--gray-3);
-              border: 1px solid var(--gray-2);
+              background: ${hasError ? 'rgba(255, 80, 80, 0.12)' : 'var(--gray-3)'};
+              border: 1px solid ${hasError ? 'rgba(255, 80, 80, 0.5)' : 'var(--gray-2)'};
               border-radius: 6px;
               min-width: 120px;
               cursor: pointer;
@@ -316,15 +330,17 @@ function renderPairList() {
             const atConf = p.enabled_at_confidence != null ? Number(p.enabled_at_confidence).toFixed(1) : null;
             const strategyDisplay = byStrategy ? byStrategy.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : '';
             const enabledByLine = (byStrategy && atConf) ? `<div style="font-size: 10px; color: var(--gray-2); margin-top: 6px;">Enabled by ${strategyDisplay} when confidence was ${atConf}%</div>` : '';
+            const errText = (p.last_error || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+            const errorIcon = hasError ? `<span title="${errText}" style="cursor: help; margin-left: 4px; color: rgba(255,80,80,0.9); font-size: 12px;">ⓘ</span>` : '';
             card.innerHTML = `
-              <div style="font-size: 13px; font-weight: 700; color: var(--accent); margin-bottom: 6px;">${baseCoin}</div>
+              <div style="font-size: 13px; font-weight: 700; color: var(--accent); margin-bottom: 6px;">${baseCoin}${errorIcon}</div>
               <div style="font-size: 11px; color: var(--gray-1); margin-bottom: 4px;">Confidence: ${signalPct.toFixed(1)}%</div>
               <div style="height: 4px; background: var(--gray-2); border-radius: 2px; overflow: hidden;">
                 <div style="height: 100%; width: ${signalPct}%; background: var(--accent); transition: width 0.3s;"></div>
               </div>${enabledByLine}
             `;
-            card.onmouseenter = () => { card.style.borderColor = 'var(--accent)'; card.style.transform = 'translateY(-2px)'; };
-            card.onmouseleave = () => { card.style.borderColor = 'var(--gray-2)'; card.style.transform = 'translateY(0)'; };
+            card.onmouseenter = () => { card.style.borderColor = hasError ? 'rgba(255, 80, 80, 0.8)' : 'var(--accent)'; card.style.transform = 'translateY(-2px)'; };
+            card.onmouseleave = () => { card.style.borderColor = hasError ? 'rgba(255, 80, 80, 0.5)' : 'var(--gray-2)'; card.style.transform = 'translateY(0)'; };
             container.appendChild(card);
         });
 
@@ -336,4 +352,40 @@ function renderPairList() {
         container.appendChild(showAllBtn);
     }
 }
+
+// Recent bot logs modal (file tail from /api/bot_logs)
+async function showBotLogsModal() {
+    const modal = document.getElementById('botLogsModal');
+    const content = document.getElementById('botLogsModalContent');
+    if (!modal || !content) return;
+    content.textContent = 'Loading…';
+    modal.style.display = 'flex';
+    modal.style.alignItems = 'center';
+    modal.style.justifyContent = 'center';
+    try {
+        const res = await fetch(`${API}/api/bot_logs?n=200`);
+        const data = await res.json();
+        if (data.error) {
+            content.textContent = 'Error: ' + data.error;
+            return;
+        }
+        const lines = data.lines || [];
+        content.textContent = lines.length ? lines.join('\n') : '(no log lines)';
+        content.scrollTop = content.scrollHeight;
+    } catch (e) {
+        content.textContent = 'Failed to load logs: ' + e.message;
+    }
+}
+function closeBotLogsModal() {
+    const modal = document.getElementById('botLogsModal');
+    if (modal) modal.style.display = 'none';
+}
+document.addEventListener('DOMContentLoaded', function () {
+    const link = document.getElementById('showBotLogsLink');
+    if (link) link.addEventListener('click', function (e) { e.preventDefault(); showBotLogsModal(); });
+    const closeBtn = document.getElementById('botLogsModalClose');
+    if (closeBtn) closeBtn.addEventListener('click', closeBotLogsModal);
+    const modal = document.getElementById('botLogsModal');
+    if (modal) modal.addEventListener('click', function (e) { if (e.target === modal) closeBotLogsModal(); });
+});
 

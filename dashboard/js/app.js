@@ -24,6 +24,7 @@ let favoritePairs = new Set(JSON.parse(localStorage.getItem('favoritePairs') || 
 let pairMode = 'MULTI';  // SINGLE or MULTI
 let selectedSinglePair = null;
 let pairSignals = [];  // Pairs with signal strength
+let pairSignalsUpdatedAt = null;  // ISO timestamp when pair_signals was last fetched
 
 
 // Toast notification
