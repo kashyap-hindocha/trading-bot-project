@@ -345,17 +345,18 @@ async function fetchOpenTrades() {
     const resp = await fetch(API + endpoint);
     const data = await resp.json();
     openTrades = Array.isArray(data) ? data : [];
+    // Ensure paper trades have source for detail view
+    if (openTradesMode === 'paper') {
+      openTrades.forEach(t => { if (!t.source) t.source = 'paper'; });
+    }
 
+    renderOpenTradesCount();
     renderOpenTradesTabs();
-
-    // REMOVED: No longer hide section when no trades
-    // Section is always visible to show current state
 
     // Auto-select first trade if none selected
     if (openTrades.length > 0 && !selectedOpenTrade) {
       switchOpenTrade(openTrades[0]);
     } else if (openTrades.length === 0) {
-      // Clear details when no trades
       selectedOpenTrade = null;
       const container = document.getElementById('openTradesDetail');
       if (container) {
@@ -373,17 +374,31 @@ function switchTradeMode() {
   fetchOpenTrades();
 }
 
+function getOpenTradeKey(trade) {
+  return trade.position_id != null && trade.position_id !== '' ? String(trade.position_id) : String(trade.id ?? '');
+}
+
 function switchOpenTrade(trade) {
   selectedOpenTrade = trade;
   renderOpenTradeDetail(trade);
 
-  // Update active tab styling
+  const key = getOpenTradeKey(trade);
   document.querySelectorAll('.trade-tab').forEach(tab => {
     tab.classList.remove('active');
-    if (tab.dataset.tradeId === String(trade.position_id)) {
-      tab.classList.add('active');
-    }
+    if (tab.dataset.tradeId === key) tab.classList.add('active');
   });
+}
+
+function renderOpenTradesCount() {
+  const el = document.getElementById('openTradesCount');
+  if (!el) return;
+  if (openTrades.length === 0) {
+    el.textContent = 'No open positions (max 3)';
+    el.style.color = 'var(--gray-2)';
+  } else {
+    el.textContent = `${openTrades.length} open position(s) (max 3)`;
+    el.style.color = 'var(--gray-1)';
+  }
 }
 
 function renderOpenTradesTabs() {
@@ -395,18 +410,15 @@ function renderOpenTradesTabs() {
     return;
   }
 
-  container.innerHTML = openTrades.map(trade => {
-    const isActive = selectedOpenTrade && selectedOpenTrade.position_id === trade.position_id;
+  container.innerHTML = openTrades.map((trade) => {
+    const key = getOpenTradeKey(trade);
+    const isActive = selectedOpenTrade && getOpenTradeKey(selectedOpenTrade) === key;
     const posType = trade.side === 'buy' ? 'LONG' : 'SHORT';
-    return `
-      <button class="trade-tab ${isActive ? 'active' : ''}" data-trade-id="${trade.position_id}" onclick="switchOpenTrade(this.parentNode.parentNode.parentNode.querySelector('[data-trade-obj]'))" title="${trade.pair}">
-        <span style="color: ${trade.side === 'buy' ? 'var(--green)' : 'var(--red)'};">${posType}</span>
-        ${trade.pair.replace('B-', '').replace('_USDT', '')}
-      </button>
-    `;
+    const pairShort = (trade.pair || '').replace('B-', '').replace('_USDT', '');
+    const posColor = trade.side === 'buy' ? 'var(--green)' : 'var(--red)';
+    return `<button class="trade-tab ${isActive ? 'active' : ''}" data-trade-id="${key}" title="${trade.pair || ''}"><span style="color: ${posColor};">${posType}</span> ${pairShort}</button>`;
   }).join('');
 
-  // Re-bind click handlers properly
   document.querySelectorAll('.trade-tab').forEach((tab, index) => {
     tab.onclick = () => switchOpenTrade(openTrades[index]);
   });
@@ -434,17 +446,20 @@ function renderOpenTradeDetail(trade) {
   const tpText = trade.tp_price ? parseFloat(trade.tp_price).toFixed(4) : '—';
   const slText = trade.sl_price ? parseFloat(trade.sl_price).toFixed(4) : '—';
 
-  // Source badge
+  // Source badge (LIVE / PAPER)
   const sourceBadge = isLive
     ? `<span style="background: var(--accent); color: #000; font-size: 9px; padding: 2px 6px; border-radius: 3px; font-weight: 700; margin-left: 8px;">LIVE</span>`
-    : `<span style="background: var(--gray-2); color: var(--gray-1); font-size: 9px; padding: 2px 6px; border-radius: 3px; font-weight: 700; margin-left: 8px;">DB</span>`;
+    : `<span style="background: var(--gray-2); color: var(--gray-1); font-size: 9px; padding: 2px 6px; border-radius: 3px; font-weight: 700; margin-left: 8px;">PAPER</span>`;
+
+  const strategyLabel = trade.strategy_name ? `<div class="trade-detail-item"><div class="trade-detail-label">Strategy</div><div class="trade-detail-value">${trade.strategy_name}</div></div>` : '';
 
   container.innerHTML = `
     <div class="trade-details-grid">
       <div class="trade-detail-item">
         <div class="trade-detail-label">Pair ${sourceBadge}</div>
-        <div class="trade-detail-value">${trade.pair}</div>
+        <div class="trade-detail-value">${trade.pair || '—'}</div>
       </div>
+      ${strategyLabel}
       <div class="trade-detail-item">
         <div class="trade-detail-label">Position</div>
         <div class="trade-detail-value" style="color: ${trade.side === 'buy' ? 'var(--green)' : 'var(--red)'};">${posType}</div>

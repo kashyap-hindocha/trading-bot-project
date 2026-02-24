@@ -47,6 +47,9 @@ logger = logging.getLogger(__name__)
 PAIR     = "B-BTC_USDT"  # Default pair
 INTERVAL = "5m"
 
+# Max total open trades across all pairs; when one closes, the next signal can open (so up to 3 at a time).
+MAX_TOTAL_OPEN_TRADES = 3
+
 if len(sys.argv) > 1:
     # Allow overriding pair from command line: python main.py B-ETH_USDT
     PAIR = sys.argv[1]
@@ -260,8 +263,13 @@ def _run_strategy(current_price: float):
             logger.debug(f"Skip execution for {PAIR}: already executed for candle {closed_candle_ts}")
             return
 
-    # Check max open trades limit PER-PAIR (not total across all pairs)
+    # Global cap: only allow up to MAX_TOTAL_OPEN_TRADES (e.g. 3) open at once; when one closes, next can take its place
     open_trades = db.get_open_paper_trades() if mode == "PAPER" else db.get_open_trades()
+    if len(open_trades) >= MAX_TOTAL_OPEN_TRADES:
+        logger.debug(f"Skip execution for {PAIR}: max open trades reached ({len(open_trades)}/{MAX_TOTAL_OPEN_TRADES})")
+        return
+
+    # Per-pair limit (from strategy config; e.g. 1 per pair so we don’t stack multiple on same pair)
     pair_open_trades = [t for t in open_trades if t.get("pair") == PAIR]
     strategy_for_pair = _get_strategy_for_pair()
     max_open_trades = strategy_for_pair.get_config().get("max_open_trades", 1) if strategy_for_pair else 1

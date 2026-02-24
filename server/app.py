@@ -17,7 +17,7 @@ except Exception as e:
     logging.error(f"Failed to import strategy_manager: {e}")
     STRATEGY_MANAGER_LOADED = False
 
-from coindcx import CoinDCXREST
+from coindcx import CoinDCXREST, CoinDCXSocket
 import threading
 import time
 
@@ -53,7 +53,80 @@ _batch_state = {
 app = Flask(__name__)
 CORS(app)
 
+# SocketIO for live chart (candlestick stream from exchange via WebSocket)
+try:
+    from flask_socketio import SocketIO, emit, join_room
+    socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
+except ImportError:
+    socketio = None
+
 db.init_db()
+
+# ── Live chart relay: stream candlestick from CoinDCX WebSocket to dashboard ──
+_chart_relay_state = {
+    "lock": threading.Lock(),
+    "requested_pair": None,
+    "requested_interval": "5m",
+    "socket": None,
+    "thread": None,
+    "running": True,
+}
+
+
+def _chart_relay_thread_fn():
+    """Background thread: connect to CoinDCX candlestick WebSocket and emit to SocketIO room."""
+    import os
+    from dotenv import load_dotenv
+    load_dotenv("/home/ubuntu/trading-bot/.env")
+    key = os.getenv("COINDCX_API_KEY") or os.getenv("API_KEY")
+    secret = os.getenv("COINDCX_API_SECRET") or os.getenv("API_SECRET")
+    if not key or not secret:
+        app.logger.warning("Chart relay: no API credentials, live chart disabled")
+        return
+    while _chart_relay_state["running"]:
+        with _chart_relay_state["lock"]:
+            pair = _chart_relay_state["requested_pair"]
+            interval = _chart_relay_state["requested_interval"]
+        if not pair:
+            time.sleep(1)
+            continue
+        try:
+            dcx = CoinDCXSocket(key, secret)
+            with _chart_relay_state["lock"]:
+                _chart_relay_state["socket"] = dcx
+
+            def on_candle(data):
+                try:
+                    t_raw = data.get("t") or data.get("timestamp")
+                    ts_sec = int(t_raw) if t_raw is not None else None
+                    if ts_sec is not None and ts_sec > 1e10:
+                        ts_sec = ts_sec // 1000
+                    if ts_sec is None:
+                        ts_sec = int(time.time())
+                    payload = {
+                        "pair": pair,
+                        "interval": interval,
+                        "time": ts_sec,
+                        "open": float(data.get("o", 0)),
+                        "high": float(data.get("h", 0)),
+                        "low": float(data.get("l", 0)),
+                        "close": float(data.get("c", 0)),
+                        "isClosed": bool(data.get("x", False)),
+                    }
+                    if socketio:
+                        socketio.emit("candlestick", payload, room="chart")
+                except Exception as e:
+                    app.logger.debug(f"Chart relay emit: {e}")
+
+            dcx.on("candlestick", on_candle)
+            dcx.connect(pair, interval)
+            dcx.wait()
+        except Exception as e:
+            app.logger.debug(f"Chart relay: {e}")
+        finally:
+            with _chart_relay_state["lock"]:
+                _chart_relay_state["socket"] = None
+        time.sleep(0.5)
 
 
 def _to_float(value):
@@ -472,6 +545,7 @@ def open_trades():
                 "sl_price": trade.get("sl_price"),
                 "opened_at": trade.get("opened_at"),
                 "status": trade.get("status", "open"),
+                "strategy_name": trade.get("strategy_name"),
             })
         return jsonify(enhanced)
     except Exception as e:
@@ -502,6 +576,7 @@ def open_paper_trades():
                 "sl_price": trade.get("sl_price"),
                 "opened_at": trade.get("opened_at"),
                 "status": trade.get("status", "open"),
+                "strategy_name": trade.get("strategy_name"),
             })
         return jsonify(enhanced)
     except Exception as e:
@@ -1884,8 +1959,42 @@ def debug_positions():
 
 
 
+# ── SocketIO: live chart subscription ──
+if socketio is not None:
+    @socketio.on("connect")
+    def _chart_connect():
+        pass
+
+    @socketio.on("subscribe_candles")
+    def _chart_subscribe(data):
+        try:
+            from flask_socketio import join_room
+            pair = (data or {}).get("pair") or (data or {}).get("pair_id")
+            interval = (data or {}).get("interval", "5m")
+            if not pair:
+                return
+            with _chart_relay_state["lock"]:
+                _chart_relay_state["requested_pair"] = pair
+                _chart_relay_state["requested_interval"] = interval
+                if _chart_relay_state["thread"] is None or not _chart_relay_state["thread"].is_alive():
+                    _chart_relay_state["thread"] = threading.Thread(target=_chart_relay_thread_fn, daemon=True)
+                    _chart_relay_state["thread"].start()
+                # disconnect current socket so thread reconnects with new pair if changed
+                sock = _chart_relay_state.get("socket")
+                if sock is not None:
+                    try:
+                        sock.disconnect()
+                    except Exception:
+                        pass
+            join_room("chart")
+        except Exception as e:
+            app.logger.debug(f"subscribe_candles: {e}")
+
 # Start batch checker on module load (works with both app.run and gunicorn)
 _start_batch_checker()
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    if socketio is not None:
+        socketio.run(app, host="0.0.0.0", port=5000, debug=False)
+    else:
+        app.run(host="0.0.0.0", port=5000, debug=False)

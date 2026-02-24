@@ -26,15 +26,15 @@ document.addEventListener('DOMContentLoaded', async function () {
   // Then fetch all data
   await checkBotStatus();
   await fetchAll();
-  updateCandleChart(); // Load initial candle data
+  updateCandleChart(); // Load initial candle data (REST)
+  if (typeof connectChartSocket === 'function') connectChartSocket(); // Live chart via WebSocket
 
   // Set up refresh intervals
   setInterval(fetchAll, REFRESH_MS);
   setInterval(checkBotStatus, REFRESH_MS);
-  // loadPairSignals uses recursive setTimeout (already started above, handles its own scheduling)
   setInterval(updateReadiness, REFRESH_MS * 2);
   setInterval(updatePriceChart, REFRESH_MS * 2);
-  setInterval(updateCandleChart, 10000); // Refresh candlesticks every 10s
+  // Candlestick: live via Socket.IO; REST fallback when socket down (candlestick.js)
   
   // Batch status self-schedules: every 2s during processing, 30s when idle
   if (typeof loadBatchStatus === 'function') {
