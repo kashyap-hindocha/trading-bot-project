@@ -137,6 +137,7 @@ def _update_candle(data: dict):
 
     # Only evaluate strategy on closed candles
     if candle["is_closed"]:
+        logger.info(f"Closed candle for {PAIR} at {candle['close']}, running strategy")
         _check_paper_positions(candle)
         _run_strategy(candle["close"])
 

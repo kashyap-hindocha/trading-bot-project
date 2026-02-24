@@ -1157,14 +1157,50 @@ def bot_stop():
 def bot_status():
     import subprocess
     try:
-        result = subprocess.run(
-            ["/usr/bin/systemctl", "is-active", "bot"],
-            capture_output=True, text=True, timeout=5
-        )
-        is_running = result.stdout.strip() == "active"
-        return jsonify({"running": is_running})
+        # Try user first, then system
+        for cmd in [["systemctl", "--user", "is-active", "bot.service"], ["/usr/bin/systemctl", "is-active", "bot"]]:
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+                if result.returncode == 0 and result.stdout.strip() == "active":
+                    return jsonify({"running": True})
+            except Exception:
+                continue
+        return jsonify({"running": False})
     except Exception:
         return jsonify({"running": False})
+
+
+@app.route("/api/paper/diagnostic")
+def paper_diagnostic():
+    """Help debug why paper trades might not run: mode, wallet, enabled pairs, checklist."""
+    try:
+        mode = db.get_trading_mode()
+        paper_balance = db.get_paper_wallet_balance()
+        enabled = db.get_enabled_pairs()
+        enabled_pairs = [p.get("pair") for p in enabled if p.get("pair")]
+        open_paper = db.get_open_paper_trades()
+        checks = []
+        if mode != "PAPER":
+            checks.append("Mode is not PAPER; switch to PAPER in dashboard to run paper trades.")
+        if paper_balance is None or (isinstance(paper_balance, (int, float)) and paper_balance <= 0):
+            checks.append("Paper wallet not initialized or zero. Switch to PAPER mode once in dashboard to seed it.")
+        if not enabled_pairs:
+            checks.append("No pairs enabled. Batch checker enables pairs at >=75%% confidence.")
+        if len(open_paper) >= 3:
+            checks.append("Already 3 open paper trades (max). Close one to allow new entries.")
+        if not checks:
+            checks.append("Config looks OK. Trades run on 5m candle close. Check bot logs for 'Closed candle', 'Signal', 'PAPER entry' or 'Signal rejected'.")
+        return jsonify({
+            "mode": mode,
+            "paper_balance": paper_balance,
+            "enabled_pairs_count": len(enabled_pairs),
+            "enabled_pairs": enabled_pairs[:20],
+            "open_paper_count": len(open_paper),
+            "checks": checks,
+        })
+    except Exception as e:
+        app.logger.error(f"Paper diagnostic: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 # ── Pair Management ──────────────────────────
