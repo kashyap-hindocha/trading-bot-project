@@ -101,6 +101,18 @@ def init_db():
         INSERT OR IGNORE INTO batch_checker_config (id, batch_strategy_mode) VALUES (1, 'enhanced_v2')
     """)
 
+    # Per-pair execution status (last closed candle, last error) for UI
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS pair_execution_status (
+            pair             TEXT PRIMARY KEY,
+            last_closed_at   TEXT,
+            last_signal      TEXT,
+            last_confidence  REAL,
+            last_error       TEXT,
+            updated_at       TEXT DEFAULT (datetime('now'))
+        )
+    """)
+
     # Add new strategy metric columns to trades table
     trade_cols = {row[1] for row in c.execute("PRAGMA table_info(trades)").fetchall()}
     if "atr" not in trade_cols:
@@ -404,6 +416,35 @@ def get_auto_enabled_pairs():
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def upsert_pair_execution_status(pair: str, last_closed_at: Optional[str] = None,
+                                  last_signal: Optional[str] = None, last_confidence: Optional[float] = None,
+                                  last_error: Optional[str] = None):
+    """Update execution status for a pair (bot calls on closed candle / skip / execute)."""
+    conn = get_conn()
+    conn.execute("""
+        INSERT INTO pair_execution_status (pair, last_closed_at, last_signal, last_confidence, last_error, updated_at)
+        VALUES (?, ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(pair) DO UPDATE SET
+            last_closed_at=COALESCE(excluded.last_closed_at, last_closed_at),
+            last_signal=COALESCE(excluded.last_signal, last_signal),
+            last_confidence=COALESCE(excluded.last_confidence, last_confidence),
+            last_error=excluded.last_error,
+            updated_at=datetime('now')
+    """, (pair, last_closed_at, last_signal, last_confidence, last_error))
+    conn.commit()
+    conn.close()
+
+
+def get_pair_execution_status_all():
+    """Get last_closed_at, last_error etc. for all pairs (for UI)."""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT pair, last_closed_at, last_signal, last_confidence, last_error, updated_at FROM pair_execution_status"
+    ).fetchall()
+    conn.close()
+    return {r["pair"]: dict(r) for r in rows}
 
 
 # ── Trading mode ────────────────────────────

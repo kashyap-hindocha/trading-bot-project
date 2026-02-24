@@ -195,27 +195,46 @@ async function loadPairSignals() {
     }
 }
 
+// Next 5m candle close countdown (UTC; trades run at close)
+function getNext5mCloseMs() {
+    const nowSec = Date.now() / 1000;
+    const nextCloseSec = Math.ceil(nowSec / 300) * 300;
+    return Math.max(0, Math.floor((nextCloseSec - nowSec) * 1000));
+}
+function updateNextCloseCountdown() {
+    const el = document.getElementById('nextCloseCountdown');
+    if (!el) return;
+    const ms = getNext5mCloseMs();
+    const totalSec = Math.floor(ms / 1000);
+    const m = Math.floor(totalSec / 60);
+    const s = totalSec % 60;
+    el.textContent = 'Next 5m close: ' + (m > 0 ? m + 'm ' : '') + s + 's';
+}
+if (typeof setInterval !== 'undefined') {
+    setInterval(updateNextCloseCountdown, 1000);
+}
+
 // Render horizontal pair list — ONLY currently enabled pairs (from pair_signals API)
 function renderPairList() {
+    updateNextCloseCountdown();
     const container = document.getElementById('pairSignalsContainer');
     if (!container) return;
 
-    // pairSignals comes from /api/pair_signals = db.get_enabled_pairs() (live enabled state only)
     if (!pairSignals || pairSignals.length === 0) {
         container.innerHTML = '<div style="color: var(--gray-2); font-size: 12px; padding: 10px;">No enabled pairs</div>';
         return;
     }
 
     const pairsToShow = pairSignals.slice(0, 10);
-
     container.innerHTML = '';
 
     pairsToShow.forEach(p => {
+        const hasError = !!(p.last_error && String(p.last_error).trim());
         const card = document.createElement('div');
         card.style.cssText = `
       padding: 12px 16px;
-      background: var(--gray-3);
-      border: 1px solid var(--gray-2);
+      background: ${hasError ? 'rgba(255, 80, 80, 0.12)' : 'var(--gray-3)'};
+      border: 1px solid ${hasError ? 'rgba(255, 80, 80, 0.5)' : 'var(--gray-2)'};
       border-radius: 6px;
       min-width: 120px;
       cursor: pointer;
@@ -228,9 +247,11 @@ function renderPairList() {
         const atConf = p.enabled_at_confidence != null ? Number(p.enabled_at_confidence).toFixed(1) : null;
         const strategyDisplay = byStrategy ? byStrategy.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : '';
         const enabledByLine = (byStrategy && atConf) ? `<div style="font-size: 10px; color: var(--gray-2); margin-top: 6px;">Enabled by ${strategyDisplay} when confidence was ${atConf}%</div>` : '';
+        const errText = (p.last_error || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+        const errorIcon = hasError ? `<span class="pair-error-icon" title="${errText}" style="cursor: help; margin-left: 4px; color: rgba(255,80,80,0.9); font-size: 12px;">ⓘ</span>` : '';
+        const titleLine = `<div style="font-size: 13px; font-weight: 700; color: var(--accent); margin-bottom: 6px;">${baseCoin}${errorIcon}</div>`;
 
-        card.innerHTML = `
-      <div style="font-size: 13px; font-weight: 700; color: var(--accent); margin-bottom: 6px;">${baseCoin}</div>
+        card.innerHTML = titleLine + `
       <div style="font-size: 11px; color: var(--gray-1); margin-bottom: 4px;">Confidence: ${signalPct}%</div>
       <div style="height: 4px; background: var(--gray-2); border-radius: 2px; overflow: hidden;">
         <div style="height: 100%; width: ${signalPct}%; background: var(--accent); transition: width 0.3s;"></div>
@@ -238,11 +259,11 @@ function renderPairList() {
     `;
 
         card.onmouseenter = () => {
-            card.style.borderColor = 'var(--accent)';
+            card.style.borderColor = hasError ? 'rgba(255, 80, 80, 0.8)' : 'var(--accent)';
             card.style.transform = 'translateY(-2px)';
         };
         card.onmouseleave = () => {
-            card.style.borderColor = 'var(--gray-2)';
+            card.style.borderColor = hasError ? 'rgba(255, 80, 80, 0.5)' : 'var(--gray-2)';
             card.style.transform = 'translateY(0)';
         };
 

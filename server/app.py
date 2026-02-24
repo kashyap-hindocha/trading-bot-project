@@ -1695,7 +1695,7 @@ def pair_signals():
                 app.logger.debug(f"[{idx}/{len(pairs_to_process)}] Fetching candles for {pair}")
                 candles = client.get_candles(pair, interval, limit=200)
                 if not candles or len(candles) < 50:
-                    results.append({
+                    out = {
                         "pair": pair,
                         "signal_strength": float(pair_config.get("enabled_at_confidence") or 0),
                         "enabled": pair_config.get("enabled", 0),
@@ -1704,7 +1704,14 @@ def pair_signals():
                         "inr_amount": pair_config.get("inr_amount", 300.0),
                         "enabled_by_strategy": enabled_by_strategy,
                         "enabled_at_confidence": pair_config.get("enabled_at_confidence"),
-                    })
+                    }
+                    try:
+                        exec_status = db.get_pair_execution_status_all().get(pair, {})
+                        out["last_closed_at"] = exec_status.get("last_closed_at")
+                        out["last_error"] = exec_status.get("last_error")
+                    except Exception:
+                        pass
+                    results.append(out)
                     continue
 
                 candles_norm = [{"open": c.get("open"), "high": c.get("high"), "low": c.get("low"), "close": c.get("close"), "volume": c.get("volume", 0), "time": c.get("time")} for c in candles]
@@ -1714,7 +1721,7 @@ def pair_signals():
                 else:
                     confidence = float(pair_config.get("enabled_at_confidence") or 0)
 
-                results.append({
+                out = {
                     "pair": pair,
                     "signal_strength": round(confidence, 1),
                     "enabled": pair_config.get("enabled", 0),
@@ -1724,11 +1731,19 @@ def pair_signals():
                     "enabled_by_strategy": enabled_by_strategy,
                     "enabled_at_confidence": pair_config.get("enabled_at_confidence"),
                     "last_price": candles[-1].get("close") if candles else None
-                })
+                }
+                try:
+                    exec_status = db.get_pair_execution_status_all().get(pair, {})
+                    out["last_closed_at"] = exec_status.get("last_closed_at")
+                    out["last_error"] = exec_status.get("last_error")
+                    out["last_signal"] = exec_status.get("last_signal")
+                except Exception:
+                    pass
+                results.append(out)
                 app.logger.debug(f"[{idx}/{len(pairs_to_process)}] {pair}: confidence={confidence:.1f}% ({enabled_by_strategy or 'active'})")
             except Exception as e:
                 app.logger.warning(f"Confidence calculation failed for {pair}: {e}")
-                results.append({
+                out = {
                     "pair": pair,
                     "signal_strength": float(pair_config.get("enabled_at_confidence") or 0),
                     "enabled": pair_config.get("enabled", 0),
@@ -1737,7 +1752,14 @@ def pair_signals():
                     "inr_amount": pair_config.get("inr_amount", 300.0),
                     "enabled_by_strategy": enabled_by_strategy,
                     "enabled_at_confidence": pair_config.get("enabled_at_confidence"),
-                })
+                }
+                try:
+                    exec_status = db.get_pair_execution_status_all().get(pair, {})
+                    out["last_closed_at"] = exec_status.get("last_closed_at")
+                    out["last_error"] = exec_status.get("last_error")
+                except Exception:
+                    pass
+                results.append(out)
 
         # Sort by current confidence (signal_strength) highest first
         results.sort(key=lambda x: x["signal_strength"], reverse=True)

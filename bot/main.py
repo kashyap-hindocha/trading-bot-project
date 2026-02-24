@@ -138,6 +138,11 @@ def _update_candle(data: dict):
     # Only evaluate strategy on closed candles
     if candle["is_closed"]:
         logger.info(f"Closed candle for {PAIR} at {candle['close']}, running strategy")
+        try:
+            from datetime import datetime, timezone
+            db.upsert_pair_execution_status(PAIR, last_closed_at=datetime.now(timezone.utc).isoformat(), last_error=None)
+        except Exception:
+            pass
         _check_paper_positions(candle)
         _run_strategy(candle["close"])
 
@@ -267,14 +272,24 @@ def _run_strategy(current_price: float):
     # Global cap: only allow up to MAX_TOTAL_OPEN_TRADES (e.g. 3) open at once; when one closes, next can take its place
     open_trades = db.get_open_paper_trades() if mode == "PAPER" else db.get_open_trades()
     if len(open_trades) >= MAX_TOTAL_OPEN_TRADES:
-        logger.info(f"Skip execution for {PAIR}: max open trades reached ({len(open_trades)}/{MAX_TOTAL_OPEN_TRADES})")
+        err = f"Max open trades ({len(open_trades)}/{MAX_TOTAL_OPEN_TRADES})"
+        logger.info(f"Skip execution for {PAIR}: {err}")
+        try:
+            db.upsert_pair_execution_status(PAIR, last_error=err)
+        except Exception:
+            pass
         return
 
     # Per-pair limit (from strategy config; e.g. 1 per pair so we don’t stack multiple on same pair)
     pair_open_trades = [t for t in open_trades if t.get("pair") == PAIR]
     strategy_for_pair = _get_strategy_for_pair()
     if not strategy_for_pair:
-        logger.warning(f"Skip execution for {PAIR}: no strategy (enabled_by_strategy not found or invalid)")
+        err = "No strategy (enabled_by_strategy not found or invalid)"
+        logger.warning(f"Skip execution for {PAIR}: {err}")
+        try:
+            db.upsert_pair_execution_status(PAIR, last_error=err)
+        except Exception:
+            pass
         return
     max_open_trades = strategy_for_pair.get_config().get("max_open_trades", 1)
     if len(pair_open_trades) >= max_open_trades:
@@ -295,7 +310,12 @@ def _run_strategy(current_price: float):
                 now = datetime.now(timezone.utc)
                 elapsed_min = (now - closed_dt).total_seconds() / 60.0
                 if elapsed_min < cooldown_minutes:
-                    logger.info(f"Skip execution for {PAIR}: re-entry cooldown ({elapsed_min:.1f}m < {cooldown_minutes}m)")
+                    err = f"Re-entry cooldown ({elapsed_min:.1f}m < {cooldown_minutes}m)"
+                    logger.info(f"Skip execution for {PAIR}: {err}")
+                    try:
+                        db.upsert_pair_execution_status(PAIR, last_error=err)
+                    except Exception:
+                        pass
                     return
             except Exception as e:
                 logger.warning(f"Cooldown check failed: {e}")
@@ -320,6 +340,10 @@ def _run_strategy(current_price: float):
 
     if not signal:
         logger.debug(f"Skip execution for {PAIR}: no signal from strategy")
+        try:
+            db.upsert_pair_execution_status(PAIR, last_error="No signal from strategy")
+        except Exception:
+            pass
         return
 
     # Allow execution if (a) strategy says auto_execute, or (b) pair was enabled at >=80% and confidence at candle close >= 75%
@@ -333,7 +357,12 @@ def _run_strategy(current_price: float):
     db.log_event("INFO", f"Signal {signal} at {current_price} for {PAIR} | Confidence: {confidence:.1f}% | ATR: {atr:.4f} | Trailing Stop: {trailing_stop:.2f}%")
 
     if not auto_execute:
-        logger.info(f"Signal rejected for {PAIR}: auto_execute=False (confidence {confidence:.1f}% below strategy threshold)")
+        err = f"Signal rejected: confidence {confidence:.1f}% below threshold"
+        logger.info(f"Signal rejected for {PAIR}: {err}")
+        try:
+            db.upsert_pair_execution_status(PAIR, last_error=err)
+        except Exception:
+            pass
         return
 
     # Mark this candle as "execution attempted" so duplicate WebSocket events don't double-place
@@ -343,6 +372,10 @@ def _run_strategy(current_price: float):
     try:
         if mode == "PAPER":
             _run_paper_trade(current_price, signal, confidence, atr, position_size, trailing_stop)
+            try:
+                db.upsert_pair_execution_status(PAIR, last_signal=signal, last_confidence=confidence, last_error=None)
+            except Exception:
+                pass
             return
 
         side       = "buy" if signal == "LONG" else "sell"
@@ -458,8 +491,13 @@ def _run_paper_trade(current_price: float, signal: str, confidence: float = 0.0,
 
     wallet_balance = db.get_paper_wallet_balance()
     if wallet_balance is None or wallet_balance <= 0:
-        logger.warning(f"PAPER entry skipped for {PAIR}: wallet not initialized or empty (balance={wallet_balance}). Switch to PAPER mode in dashboard to initialize.")
+        err = "Paper wallet not initialized or empty (switch to PAPER mode once)"
+        logger.warning(f"PAPER entry skipped for {PAIR}: {err}")
         db.log_event("WARNING", "PAPER wallet not initialized or empty - switch to PAPER mode to initialize")
+        try:
+            db.upsert_pair_execution_status(PAIR, last_error=err)
+        except Exception:
+            pass
         return
 
     # Calculate TP/SL using the strategy that enabled this pair

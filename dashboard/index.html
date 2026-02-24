@@ -104,7 +104,9 @@
       <div class="panel-title">
         📊 Trading Pairs
         <div class="panel-tools" style="font-size: 11px; color: var(--gray-2);">
-          Only currently auto-enabled pairs (≥75% confidence) · Sorted by signal strength
+          <span id="nextCloseCountdown" title="Time until next 5m candle close (trades run at close)">Next 5m close: —</span>
+          <span style="margin-left: 8px;">·</span>
+          <span style="margin-left: 8px;">Only currently auto-enabled pairs (≥75% confidence) · Sorted by signal strength</span>
         </div>
       </div>
       <div id="pairSignalsContainer" style="display: flex; gap: 10px; flex-wrap: wrap;">
