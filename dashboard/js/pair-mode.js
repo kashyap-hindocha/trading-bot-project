@@ -182,6 +182,9 @@ async function loadPairSignals() {
         if (typeof refreshBatchUI === 'function') {
             refreshBatchUI();
         }
+        if (typeof refreshCandleInfo === 'function') {
+            refreshCandleInfo();
+        }
         
         console.debug(`Pair signals loaded in ${fetchTime}s, scheduling next call in 7s`);
     } catch (err) {

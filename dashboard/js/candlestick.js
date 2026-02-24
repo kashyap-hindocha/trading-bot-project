@@ -9,6 +9,7 @@ let selectedCandlePair = '';
 let priceChartPair = '';
 let chartSocket = null;
 let chartLiveConnected = false;
+let lastCandleForInfo = null; // so we can refresh confidence when pairSignals updates
 
 // Initialize candlestick chart with lightweight-charts
 function initCandleChart() {
@@ -154,14 +155,26 @@ async function updateCandleChart() {
 }
 
 function updateCandleInfo(pair, lastCandle) {
-  if (!lastCandle || !pair) return;
+  if (!pair) return;
+  if (lastCandle) lastCandleForInfo = lastCandle;
+  const candle = lastCandle || lastCandleForInfo;
   const el = document.getElementById('candleInfo');
   if (!el) return;
   const baseCoin = pair.replace('B-', '').replace('_USDT', '');
-  const readiness = (typeof pairReadiness !== 'undefined' && pairReadiness && pairReadiness[pair]) ? pairReadiness[pair].readiness : 0;
-  const liveTag = chartLiveConnected ? ' ● LIVE' : '';
+  // Use same confidence as Quick View / Trading Pairs (pairSignals.signal_strength); fallback to pairReadiness
+  const pairData = (typeof pairSignals !== 'undefined' && Array.isArray(pairSignals)) ? pairSignals.find(function (p) { return p.pair === pair; }) : null;
+  const confidence = (pairData && pairData.signal_strength != null) ? Number(pairData.signal_strength) : ((typeof pairReadiness !== 'undefined' && pairReadiness && pairReadiness[pair]) ? pairReadiness[pair].readiness : 0);
+  const liveTag = chartLiveConnected ? ' \u2022 LIVE' : '';
+  if (!candle) {
+    el.textContent = baseCoin + ' | Confidence: ' + confidence.toFixed(1) + '%' + liveTag;
+    return;
+  }
   el.textContent =
-    `${baseCoin} | O: ${lastCandle.open.toFixed(4)} H: ${lastCandle.high.toFixed(4)} L: ${lastCandle.low.toFixed(4)} C: ${lastCandle.close.toFixed(4)} | Confidence: ${readiness.toFixed(1)}%${liveTag}`;
+    baseCoin + ' | O: ' + candle.open.toFixed(4) + ' H: ' + candle.high.toFixed(4) + ' L: ' + candle.low.toFixed(4) + ' C: ' + candle.close.toFixed(4) + ' | Confidence: ' + confidence.toFixed(1) + '%' + liveTag;
+}
+
+function refreshCandleInfo() {
+  if (selectedCandlePair) updateCandleInfo(selectedCandlePair, null);
 }
 
 // ── Live chart via Socket.IO (no polling) ──
@@ -214,6 +227,7 @@ function onCandlePairSelect() {
     selectedCandlePair = select.value;
     updateCandleChart();
     subscribeChartCandles();
+    if (typeof updateTradingViewSymbol === 'function') updateTradingViewSymbol();
   }
 }
 
@@ -235,6 +249,7 @@ function onTimeframeChange() {
     currentTimeframe = tf;
     updateCandleChart();
     subscribeChartCandles();
+    if (typeof updateTradingViewSymbol === 'function') updateTradingViewSymbol();
   }
 }
 

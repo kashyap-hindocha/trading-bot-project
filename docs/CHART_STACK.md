@@ -4,21 +4,33 @@
 
 | Chart | Package | Tech | Where |
 |-------|---------|------|--------|
-| **Candlestick (main live chart)** | **Lightweight Charts** (TradingView) v4.1.0 | **JavaScript** (browser) | `dashboard/js/candlestick.js` |
+| **Our candlestick** | **Lightweight Charts** v4.1.0 | **JavaScript** (browser) | `dashboard/js/candlestick.js` |
+| **TradingView live** | **TradingView Advanced Chart** (embed) | **JavaScript** (browser, TradingView script) | `dashboard/js/tradingview-embed.js` |
 | **P&L / line charts** | **Chart.js** 4.4.1 | **JavaScript** (browser) | `dashboard/js/charts.js` |
 
-- **Backend:** Python (Flask). It does **not** draw charts; it only serves REST (`/api/candles`, etc.) and Socket.IO for live candle stream.
-- **Frontend:** HTML + CSS + **JavaScript** in the browser. All chart rendering is **client-side JS**.
-
-So: **chart package = JS (Lightweight Charts + Chart.js), not Python.**
+- **Backend:** Python (Flask). Serves REST and Socket.IO; it does **not** draw charts.
+- **Frontend:** All chart rendering is **client-side JavaScript** in the browser.
 
 ---
 
-## Why the candlestick chart wasn’t “live”
+## “Live” behaviour
 
-The live stream uses **Socket.IO**. Nginx was only proxying `/api/` to the app, so requests to `/socket.io/` never reached Flask and the chart fell back to REST (e.g. every 60s).  
+- **Our chart (CoinDCX):** Updates when the **exchange sends a candle tick** (current candle OHLC). That is typically every few seconds to a minute for the forming candle, not every second. So it’s “live” in the sense of **candle updates**, not tick‑by‑tick.
+- **TradingView tab:** Uses TradingView’s own data feed. You get **real-time, per-tick** style updates and full toolbar (indicators, drawings, volume, etc.) like on their site. Pair is mapped to **BINANCE:XXXUSDT** (e.g. OP → BINANCE:OPUSDT).
 
-**Fix applied:** `nginx.conf` now has a `location /socket.io/` that proxies to the same Flask app. After you deploy that and reload nginx, the candlestick chart can use the live stream (and you should see “● LIVE” when connected).
+Use **“TradingView live”** for second-by-second style live charts; use **“Our chart”** for data coming from your CoinDCX feed.
+
+---
+
+## Confidence on the chart
+
+The line above the chart (e.g. “OP | O: … H: … L: … C: … | Confidence: 87.4%”) now uses the **same** confidence as the Trading Pairs / Quick View: **pair signals’ `signal_strength`**. It no longer shows 0 when the pair has high confidence.
+
+---
+
+## Nginx and Socket.IO
+
+`nginx.conf` has a `location /socket.io/` so the live candle stream reaches the app. Without it, “Our chart” falls back to REST (e.g. every 60s).
 
 ---
 

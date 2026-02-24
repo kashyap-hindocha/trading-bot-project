@@ -136,28 +136,35 @@
     <!-- Charts and Favorites Layout (70/30) -->
     <div class="charts-pairs-container">
       <div class="charts-section">
-        <!-- Candlestick Chart (Main Dynamic Chart) -->
+        <!-- Chart type: Our chart (candle updates) vs TradingView (real-time) -->
         <div class="chart-panel wide">
           <div class="panel-title">
-            🕯️ Live Price Chart (Interactive) — Threshold: 90%
+            🕯️ Price Chart
             <div class="panel-tools">
+              <span style="font-size: 11px; color: var(--gray-2); margin-right: 8px;">Chart:</span>
+              <button type="button" id="chartTabOur" class="chart-tab active" onclick="switchChartTab('our')" style="padding: 4px 10px; margin-right: 4px; font-size: 11px;">Our chart</button>
+              <button type="button" id="chartTabTv" class="chart-tab" onclick="switchChartTab('tradingview')" style="padding: 4px 10px; font-size: 11px;">TradingView live</button>
               <select id="candlePairSelect" onchange="onCandlePairSelect()"
-                style="padding: 4px 8px; background: #1e2a35; color: #00e5ff; border: 1px solid #2a3a45; border-radius: 4px; font-family: Space Mono; font-size: 12px; min-width: 120px;">
+                style="padding: 4px 8px; background: #1e2a35; color: #00e5ff; border: 1px solid #2a3a45; border-radius: 4px; font-family: Space Mono; font-size: 12px; min-width: 120px; margin-left: 12px;">
                 <option value="">Select Pair...</option>
               </select>
               <select id="candleTimeframe" onchange="onTimeframeChange()"
-                style="padding: 4px 8px; background: #1e2a35; color: #00e5ff; border: 1px solid #2a3a45; border-radius: 4px; font-family: Space Mono; font-size: 12px;">
+                style="padding: 4px 8px; background: #1e2a35; color: #00e5ff; border: 1px solid #2a3a45; border-radius: 4px; font-family: Space Mono; font-size: 12px; margin-left: 4px;">
                 <option value="1m">1m</option>
                 <option value="5m" selected>5m</option>
                 <option value="15m">15m</option>
                 <option value="1h">1h</option>
                 <option value="4h">4h</option>
               </select>
-              <span id="candleInfo" style="color: #4a6070; font-size: 11px; margin-left: 12px;">— Zoom: Wheel | Pan:
-                Drag</span>
+              <span id="candleInfo" style="color: #4a6070; font-size: 11px; margin-left: 12px;">—</span>
             </div>
           </div>
-          <div id="candleChart" style="width: 100%; height: 400px; background: #0f1419;"></div>
+          <div id="ourChartContainer" style="width: 100%;">
+            <div id="candleChart" style="width: 100%; height: 400px; background: #0f1419;"></div>
+          </div>
+          <div id="tradingviewContainer" style="display: none; width: 100%; height: 450px; background: #0f1419;">
+            <div id="tradingview_chart" style="width: 100%; height: 100%;"></div>
+          </div>
         </div>
 
         <!-- Side-by-side Charts -->
@@ -332,6 +339,7 @@
   <script src="js/app.js"></script>
   <script src="js/charts.js"></script>
   <script src="js/candlestick.js"></script>
+  <script src="js/tradingview-embed.js"></script>
   <script src="js/data.js"></script>
   <script src="js/ui.js"></script>
   <script src="js/pair-mode.js"></script>
