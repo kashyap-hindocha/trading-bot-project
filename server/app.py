@@ -1867,6 +1867,10 @@ def pair_signals():
                 app.logger.debug(f"[{idx}/{len(pairs_to_process)}] Fetching candles for {pair}")
                 candles = client.get_candles(pair, "5m", limit=200)
                 if not candles or len(candles) < 50:
+                    app.logger.info(
+                        f"[pair_signals] {pair}: SKIP (candles len={len(candles) if candles else 0}), "
+                        f"using enabled_at_confidence={pair_config.get('enabled_at_confidence')}"
+                    )
                     out = {
                         "pair": pair,
                         "signal_strength": float(pair_config.get("enabled_at_confidence") or 0),
@@ -1892,8 +1896,15 @@ def pair_signals():
                      "close": c.get("close"), "volume": c.get("volume", 0), "time": c.get("time")}
                     for c in candles
                 ]
+                last_c = candles[-1]
+                last_close = last_c.get("close") or last_c.get("c")
+                last_time = last_c.get("time") or last_c.get("t")
                 # Run all 3 strategies and use highest confidence so display updates with live data
                 best_confidence, best_strategy_key = _compute_best_confidence_all_strategies(candles_norm)
+                app.logger.info(
+                    f"[pair_signals] {pair}: candles={len(candles)} last_close={last_close} last_time={last_time} "
+                    f"-> best_confidence={best_confidence}% ({best_strategy_key})"
+                )
 
                 out = {
                     "pair": pair,
