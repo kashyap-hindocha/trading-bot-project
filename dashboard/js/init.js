@@ -12,13 +12,8 @@ document.addEventListener('DOMContentLoaded', async function () {
   await fetchMode();
   await loadStrategies();
 
-  // Load pair signals (multi-pair always enabled; no Trading Mode section)
-  await loadPairSignals(); // Load horizontal pair signals
-
-  // Load batch status and auto-enabled pairs
-  if (typeof refreshBatchUI === 'function') {
-    await refreshBatchUI();
-  }
+  // Load pair signals (enabled pairs + last run status from bot)
+  await loadPairSignals();
 
   // NOW populate pair selectors — pairSignals is ready
   populatePairSelectors();
@@ -34,14 +29,5 @@ document.addEventListener('DOMContentLoaded', async function () {
   setInterval(checkBotStatus, REFRESH_MS);
   setInterval(updateReadiness, REFRESH_MS * 2);
   setInterval(updatePriceChart, REFRESH_MS * 2);
-  // Candlestick: live via Socket.IO; REST fallback when socket down (candlestick.js)
-  
-  // Batch status self-schedules: every 2s during processing, 30s when idle
-  if (typeof loadBatchStatus === 'function') {
-    loadBatchStatus();
-  }
-  if (typeof initConfidenceHistoryPagination === 'function') {
-    initConfidenceHistoryPagination();
-  }
 });
 

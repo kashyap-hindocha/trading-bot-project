@@ -280,28 +280,22 @@ async function savePairConfig(pair, showSuccess = false) {
 }
 
 async function updateReadiness() {
-  // API accepts max 5 pairs per request (batch-of-5); use enabled pairs only to save data
-  const enabledPairIds = (typeof pairSignals !== 'undefined' && Array.isArray(pairSignals))
-    ? pairSignals.slice(0, 5).map(p => p.pair)
-    : (pairsList || []).slice(0, 5);
-  if (!enabledPairIds.length) return;
+  // Use pair_signals (last run from bot) for confidence/readiness display
   try {
-    const resp = await fetch(API + '/api/signal/readiness?pairs=' + encodeURIComponent(enabledPairIds.join(',')));
+    const resp = await fetch(API + '/api/pair_signals');
     const data = await resp.json();
-
-    if (!Array.isArray(data)) return;
-
-    // Store readiness data globally for sorting
-    data.forEach(item => {
+    const pairs = (data && data.pairs) ? data.pairs : [];
+    pairs.forEach(item => {
       if (!item || !item.pair) return;
-      pairReadiness[item.pair] = item;
+      const readiness = item.last_confidence != null ? item.last_confidence : (item.signal_strength || 0);
+      pairReadiness[item.pair] = { pair: item.pair, readiness };
 
       const bar = document.querySelector(`[data-readiness="${item.pair}"]`);
       const val = document.querySelector(`[data-readiness-val="${item.pair}"]`);
       if (!bar || !val) return;
-      const pct = Math.min(100, Math.max(0, item.readiness || 0));
+      const pct = Math.min(100, Math.max(0, readiness));
       bar.style.width = pct + '%';
-      val.textContent = `${pct}%`;
+      val.textContent = pct.toFixed(1) + '%';
     });
   } catch (e) {
     console.debug('updateReadiness error:', e);

@@ -70,9 +70,10 @@ API_SECRET = os.getenv("COINDCX_API_SECRET")
 rest   = CoinDCXREST(API_KEY, API_SECRET)
 socket = CoinDCXSocket(API_KEY, API_SECRET)
 
-# Initialize strategy manager and set default strategy
-strategy_manager.strategy_manager.set_active_strategy("enhanced_v2")
-logger.info(f"Active strategy: {strategy_manager.strategy_manager.get_active_strategy_name()}")
+# Use bot_config: one active strategy and confidence threshold for all pairs
+_active_strategy_key = db.get_active_strategy()
+strategy_manager.strategy_manager.set_active_strategy(_active_strategy_key)
+logger.info(f"Active strategy: {_active_strategy_key} | Confidence threshold: {db.get_confidence_threshold()}%")
 
 TAKER_FEE_RATE = 0.0005  # 0.05% taker fee
 
@@ -283,17 +284,13 @@ def _check_paper_positions(candle: dict):
     db.set_paper_wallet_balance(wallet_balance)
 
 
-# ── Strategy execution (uses the strategy that enabled this pair, or active strategy)
+# ── Strategy execution (single user-chosen strategy from bot_config)
 # ─────────────────────────────────────────────
 def _get_strategy_for_pair():
-    """Use the strategy that enabled this pair (enabled_by_strategy) for execution; else active strategy."""
-    pair_config = _get_pair_config()
-    enabled_by = (pair_config or {}).get("enabled_by_strategy")
-    if enabled_by:
-        strat = strategy_manager.strategy_manager.get_strategy_instance(enabled_by)
-        if strat:
-            return strat
-    return strategy_manager.strategy_manager.get_active_strategy()
+    """Use active strategy from bot_config for execution."""
+    key = db.get_active_strategy()
+    strat = strategy_manager.strategy_manager.get_strategy_instance(key) if key else None
+    return strat or strategy_manager.strategy_manager.get_active_strategy()
 
 
 def _run_strategy(current_price: float):
@@ -322,7 +319,7 @@ def _run_strategy(current_price: float):
     pair_open_trades = [t for t in open_trades if t.get("pair") == PAIR]
     strategy_for_pair = _get_strategy_for_pair()
     if not strategy_for_pair:
-        err = "No strategy (enabled_by_strategy not found or invalid)"
+        err = "No strategy (active_strategy not set or invalid)"
         logger.warning(f"Skip execution for {PAIR}: {err}")
         try:
             db.upsert_pair_execution_status(PAIR, last_error=err)
@@ -369,14 +366,12 @@ def _run_strategy(current_price: float):
     if isinstance(result, dict):
         signal = result.get("signal")
         confidence = result.get("confidence", 0.0)
-        auto_execute = result.get("auto_execute", False)
         atr = result.get("atr", 0.0)
         position_size = result.get("position_size", 0.0)
         trailing_stop = result.get("trailing_stop", 0.0)
     else:
         signal = result
         confidence = 0.0
-        auto_execute = False
         atr = 0.0
         position_size = 0.0
         trailing_stop = 0.0
@@ -389,24 +384,18 @@ def _run_strategy(current_price: float):
             pass
         return
 
-    # Allow execution if (a) strategy says auto_execute, or (b) pair was enabled at >=80% and confidence at candle close >= 75%
-    pair_config = _get_pair_config()
-    enabled_at_conf = (pair_config or {}).get("enabled_at_confidence")
-    if not auto_execute and confidence >= 75.0 and enabled_at_conf is not None and float(enabled_at_conf) >= 80.0:
-        auto_execute = True
-        logger.info(f"Execution allowed for {PAIR}: confidence {confidence:.1f}% at close, pair was enabled at {enabled_at_conf}%")
-
-    logger.info(f"Signal: {signal} at price {current_price} | Confidence: {confidence:.1f}% | ATR: {atr:.4f} | Position Size: {position_size:.6f} | Trailing Stop: {trailing_stop:.2f} | Auto-execute: {auto_execute}")
-    db.log_event("INFO", f"Signal {signal} at {current_price} for {PAIR} | Confidence: {confidence:.1f}% | ATR: {atr:.4f} | Trailing Stop: {trailing_stop:.2f}%")
-
-    if not auto_execute:
-        err = f"Signal rejected: confidence {confidence:.1f}% below threshold"
+    threshold = db.get_confidence_threshold()
+    if confidence < threshold:
+        err = f"Signal rejected: confidence {confidence:.1f}% below threshold ({threshold}%)"
         logger.info(f"Signal rejected for {PAIR}: {err}")
         try:
             db.upsert_pair_execution_status(PAIR, last_confidence=confidence, last_error=err)
         except Exception:
             pass
         return
+
+    logger.info(f"Signal: {signal} at price {current_price} | Confidence: {confidence:.1f}% (>= {threshold}%) | ATR: {atr:.4f} | Position Size: {position_size:.6f} | Trailing Stop: {trailing_stop:.2f}")
+    db.log_event("INFO", f"Signal {signal} at {current_price} for {PAIR} | Confidence: {confidence:.1f}% | ATR: {atr:.4f} | Trailing Stop: {trailing_stop:.2f}%")
 
     # Mark this candle as "execution attempted" so duplicate WebSocket events don't double-place
     if candle_buffer:
@@ -455,7 +444,7 @@ def _run_strategy(current_price: float):
             db.log_event("ERROR", f"Order placement failed for {PAIR}: {order}")
             return
         order_id = order.get("id", "")
-        logger.info(f"Entry order placed: {order_id} | {signal} limit @ {limit_price} | Auto-execute: {auto_execute}")
+        logger.info(f"Entry order placed: {order_id} | {signal} limit @ {limit_price}")
 
         # Try to get position ID from order response first
         position_id = order.get("position_id", "")
@@ -507,8 +496,7 @@ def _run_strategy(current_price: float):
                 db.log_event("WARNING", f"TP/SL failed for {PAIR} position {position_id}")
 
         # Save to DB
-        pair_cfg = _get_pair_config()
-        strategy_key = (pair_cfg or {}).get("enabled_by_strategy") or strategy_manager.strategy_manager.get_active_strategy_name()
+        strategy_key = db.get_active_strategy()
         db.insert_trade(
             pair=PAIR,
             side=side,
@@ -520,7 +508,7 @@ def _run_strategy(current_price: float):
             order_id=order_id,
             position_id=position_id,
             strategy_name=strategy_key or "enhanced_v2",
-            strategy_note=f"{strategy_for_pair.get_name() if strategy_for_pair else 'Unknown'} signal {signal} | Confidence: {confidence:.1f}% | Auto-execute: {auto_execute}",
+            strategy_note=f"{strategy_for_pair.get_name() if strategy_for_pair else 'Unknown'} signal {signal} | Confidence: {confidence:.1f}%",
             confidence=confidence,
             atr=atr,
             position_size=position_size,
@@ -571,7 +559,7 @@ def _run_paper_trade(current_price: float, signal: str, confidence: float = 0.0,
 
     db.set_paper_wallet_balance(wallet_balance - entry_fee)
 
-    strategy_key = (pair_config or {}).get("enabled_by_strategy") or strategy_manager.strategy_manager.get_active_strategy_name()
+    strategy_key = db.get_active_strategy()
     db.insert_paper_trade(
         pair=PAIR,
         side=side,

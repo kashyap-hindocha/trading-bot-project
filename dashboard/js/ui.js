@@ -10,10 +10,10 @@ function renderMode() {
   btn.disabled = false;
 }
 
-// ── Strategy Management ──
-// Batch mode: "auto" = cycle all 3 strategies every 5 min; else use selected strategy only
+// ── Strategy & confidence threshold (from bot_config) ──
 async function loadStrategies() {
   const select = document.getElementById('strategySelect');
+  const thresholdInput = document.getElementById('confidenceThresholdInput');
   if (!select) return;
 
   try {
@@ -21,51 +21,70 @@ async function loadStrategies() {
     if (!response.ok) throw new Error('HTTP ' + response.status);
     const data = await response.json();
 
-    // Always include "Auto (cycle all 3)" as the first option
     const strategies = (data.strategies && Array.isArray(data.strategies)) ? data.strategies : [];
-    const batchMode = (data.batch_mode || data.active || 'enhanced_v2').toLowerCase();
-    const options = ['<option value="auto">Auto (cycle all 3)</option>'];
+    const active = data.active || 'enhanced_v2';
+    const options = [];
     strategies.forEach(function (s) {
       const name = s.name || '';
       const label = (s.displayName || s.display_name || s.name || name).trim() || name;
       if (name) options.push('<option value="' + name + '">' + label + '</option>');
     });
-    select.innerHTML = options.length > 1 ? options.join('') : '<option value="auto">Auto (cycle all 3)</option><option value="enhanced_v2">Enhanced v2</option><option value="bollinger_rsi">Bollinger RSI</option><option value="breakout_vol">Breakout Vol</option>';
+    select.innerHTML = options.length ? options.join('') : '<option value="enhanced_v2">Enhanced v2</option><option value="bollinger_rsi">Bollinger RSI</option><option value="breakout_vol">Breakout Vol</option>';
+    select.value = active;
+    select.disabled = false;
 
-    select.value = (batchMode === 'auto' ? 'auto' : (data.active || (strategies[0] && strategies[0].name) || 'enhanced_v2'));
-    select.disabled = false;
+    const threshold = data.confidence_threshold != null ? Number(data.confidence_threshold) : 80;
+    if (thresholdInput) {
+      thresholdInput.value = Math.min(100, Math.max(0, threshold));
+    }
   } catch (error) {
-    select.innerHTML = '<option value="auto">Auto (cycle all 3)</option><option value="enhanced_v2">Enhanced v2</option><option value="bollinger_rsi">Bollinger RSI</option><option value="breakout_vol">Breakout Vol</option>';
-    select.value = 'auto';
+    select.innerHTML = '<option value="enhanced_v2">Enhanced v2</option>';
+    select.value = 'enhanced_v2';
     select.disabled = false;
+    if (thresholdInput) thresholdInput.value = 80;
     console.error('Strategy load failed:', error);
   }
 }
 
 async function changeStrategy() {
   const select = document.getElementById('strategySelect');
-  const strategyName = select.value;
-
+  const strategyName = select && select.value;
   if (!strategyName) return;
-
   try {
-    const response = await fetch((typeof API !== 'undefined' ? API : '') + '/api/strategies', {
+    const res = await fetch((typeof API !== 'undefined' ? API : '') + '/api/strategies', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ strategy: strategyName })
     });
-
-    if (response.ok) {
-      console.log(`Strategy changed to: ${strategyName}`);
-      // Optionally reload data to reflect new strategy
+    if (res.ok) {
+      console.log('Strategy set to:', strategyName);
       fetchAll();
-    } else {
-      console.error('Failed to change strategy');
-      // Reset to previous value
-      loadStrategies();
-    }
-  } catch (error) {
-    console.error('Error changing strategy:', error);
+    } else loadStrategies();
+  } catch (e) {
+    console.error('Change strategy:', e);
+    loadStrategies();
+  }
+}
+
+async function changeConfidenceThreshold() {
+  const input = document.getElementById('confidenceThresholdInput');
+  if (!input) return;
+  const v = parseFloat(input.value);
+  if (isNaN(v) || v < 0 || v > 100) {
+    loadStrategies();
+    return;
+  }
+  try {
+    const res = await fetch((typeof API !== 'undefined' ? API : '') + '/api/strategies', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confidence_threshold: v })
+    });
+    if (res.ok) {
+      console.log('Confidence threshold set to:', v + '%');
+    } else loadStrategies();
+  } catch (e) {
+    console.error('Change confidence threshold:', e);
     loadStrategies();
   }
 }

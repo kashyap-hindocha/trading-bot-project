@@ -89,19 +89,7 @@ def init_db():
     if "enabled_at_confidence" not in cols:
         c.execute("ALTER TABLE pair_config ADD COLUMN enabled_at_confidence REAL")
 
-    # Batch checker mode: "auto" (cycle all strategies) or strategy key e.g. "enhanced_v2"
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS batch_checker_config (
-            id                  INTEGER PRIMARY KEY CHECK (id = 1),
-            batch_strategy_mode TEXT NOT NULL DEFAULT 'enhanced_v2',
-            updated_at          TEXT DEFAULT (datetime('now'))
-        )
-    """)
-    c.execute("""
-        INSERT OR IGNORE INTO batch_checker_config (id, batch_strategy_mode) VALUES (1, 'enhanced_v2')
-    """)
-
-    # Per-pair execution status (last closed candle, last error) for UI
+    # Per-pair execution status (last run: signal, confidence, error) for UI
     c.execute("""
         CREATE TABLE IF NOT EXISTS pair_execution_status (
             pair             TEXT PRIMARY KEY,
@@ -190,11 +178,26 @@ def init_db():
 
     c.execute("""
         CREATE TABLE IF NOT EXISTS bot_config (
-            id            INTEGER PRIMARY KEY CHECK (id = 1),
-            pair_mode     TEXT DEFAULT 'MULTI',  -- SINGLE / MULTI
-            selected_pair TEXT,                   -- Used when pair_mode=SINGLE
-            updated_at    TEXT DEFAULT (datetime('now'))
+            id                   INTEGER PRIMARY KEY CHECK (id = 1),
+            pair_mode            TEXT DEFAULT 'MULTI',
+            selected_pair        TEXT,
+            active_strategy      TEXT DEFAULT 'enhanced_v2',   -- User-chosen strategy
+            confidence_threshold REAL DEFAULT 80.0,            -- Min confidence % to execute (user-set)
+            updated_at           TEXT DEFAULT (datetime('now'))
         )
+    """)
+    # Add new columns if missing (migration for existing DBs)
+    bc_cols = {row[1] for row in c.execute("PRAGMA table_info(bot_config)").fetchall()}
+    if "active_strategy" not in bc_cols:
+        c.execute("ALTER TABLE bot_config ADD COLUMN active_strategy TEXT DEFAULT 'enhanced_v2'")
+        c.execute("UPDATE bot_config SET active_strategy='enhanced_v2' WHERE active_strategy IS NULL")
+    if "confidence_threshold" not in bc_cols:
+        c.execute("ALTER TABLE bot_config ADD COLUMN confidence_threshold REAL DEFAULT 80.0")
+        c.execute("UPDATE bot_config SET confidence_threshold=80.0 WHERE confidence_threshold IS NULL")
+
+    c.execute("""
+        INSERT OR IGNORE INTO bot_config (id, pair_mode, active_strategy, confidence_threshold)
+        VALUES (1, 'MULTI', 'enhanced_v2', 80.0)
     """)
 
     conn.commit()
@@ -383,54 +386,6 @@ def update_pair_enabled(pair: str, enabled: int):
     """, (pair, enabled))
     conn.commit()
     conn.close()
-
-
-def update_pair_auto_status(pair: str, enabled: int, auto_enabled: int,
-                            enabled_by_strategy: str = None, enabled_at_confidence: float = None):
-    """Update pair enabled, auto_enabled, and optional strategy/confidence (batch checker)."""
-    conn = get_conn()
-    conn.execute("""
-        UPDATE pair_config SET enabled=?, auto_enabled=?,
-            enabled_by_strategy=?, enabled_at_confidence=?,
-            updated_at=datetime('now') WHERE pair=?
-    """, (enabled, auto_enabled, enabled_by_strategy, enabled_at_confidence, pair))
-    if conn.total_changes == 0:
-        conn.execute("""
-            INSERT INTO pair_config (pair, enabled, auto_enabled, enabled_by_strategy, enabled_at_confidence, leverage, quantity, inr_amount, updated_at)
-            VALUES (?, ?, ?, ?, ?, 5, 0.001, 300.0, datetime('now'))
-        """, (pair, enabled, auto_enabled, enabled_by_strategy, enabled_at_confidence))
-    conn.commit()
-    conn.close()
-
-
-def get_batch_strategy_mode() -> str:
-    """Get batch checker mode: 'auto' or strategy key (e.g. 'enhanced_v2')."""
-    conn = get_conn()
-    row = conn.execute("SELECT batch_strategy_mode FROM batch_checker_config WHERE id=1").fetchone()
-    conn.close()
-    return (row["batch_strategy_mode"] or "enhanced_v2") if row else "enhanced_v2"
-
-
-def set_batch_strategy_mode(mode: str):
-    """Set batch checker mode: 'auto' or strategy key."""
-    conn = get_conn()
-    conn.execute("""
-        INSERT INTO batch_checker_config (id, batch_strategy_mode, updated_at)
-        VALUES (1, ?, datetime('now'))
-        ON CONFLICT(id) DO UPDATE SET batch_strategy_mode=excluded.batch_strategy_mode, updated_at=datetime('now')
-    """, (mode or "enhanced_v2",))
-    conn.commit()
-    conn.close()
-
-
-def get_auto_enabled_pairs():
-    """Get pairs that are enabled AND were auto-enabled (for re-evaluation)."""
-    conn = get_conn()
-    rows = conn.execute(
-        "SELECT * FROM pair_config WHERE enabled=1 AND auto_enabled=1 ORDER BY pair ASC"
-    ).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
 
 
 def upsert_pair_execution_status(pair: str, last_closed_at: Optional[str] = None,
@@ -630,6 +585,42 @@ def set_pair_mode(mode: str, selected_pair: str = None):
             selected_pair=NULL,
             updated_at=datetime('now')
     """, (mode,))
+    conn.commit()
+    conn.close()
+
+
+def get_active_strategy() -> str:
+    conn = get_conn()
+    row = conn.execute("SELECT active_strategy FROM bot_config WHERE id=1").fetchone()
+    conn.close()
+    return (row["active_strategy"] or "enhanced_v2") if row else "enhanced_v2"
+
+
+def set_active_strategy(strategy_key: str):
+    conn = get_conn()
+    conn.execute("""
+        INSERT INTO bot_config (id, active_strategy, updated_at) VALUES (1, ?, datetime('now'))
+        ON CONFLICT(id) DO UPDATE SET active_strategy=excluded.active_strategy, updated_at=datetime('now')
+    """, (strategy_key or "enhanced_v2",))
+    conn.commit()
+    conn.close()
+
+
+def get_confidence_threshold() -> float:
+    conn = get_conn()
+    row = conn.execute("SELECT confidence_threshold FROM bot_config WHERE id=1").fetchone()
+    conn.close()
+    if row and row["confidence_threshold"] is not None:
+        return float(row["confidence_threshold"])
+    return 80.0
+
+
+def set_confidence_threshold(threshold: float):
+    conn = get_conn()
+    conn.execute("""
+        INSERT INTO bot_config (id, confidence_threshold, updated_at) VALUES (1, ?, datetime('now'))
+        ON CONFLICT(id) DO UPDATE SET confidence_threshold=excluded.confidence_threshold, updated_at=datetime('now')
+    """, (float(threshold),))
     conn.commit()
     conn.close()
 

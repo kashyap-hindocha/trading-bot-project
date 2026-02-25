@@ -42,6 +42,8 @@
       <select class="strategy-select" id="strategySelect" onchange="changeStrategy()" disabled>
         <option value="">Loading strategies...</option>
       </select>
+      <label style="font-size: 11px; color: var(--gray-2); margin-left: 8px;">Min conf %</label>
+      <input type="number" id="confidenceThresholdInput" min="0" max="100" step="1" value="80" style="width: 48px; padding: 4px 6px; background: var(--gray-3); color: var(--accent); border: 1px solid var(--gray-2); border-radius: 4px; font-family: Space Mono; font-size: 12px;" onchange="changeConfidenceThreshold()" title="Min confidence % to execute a trade">
       <button class="toggle-btn start" id="toggleBtn" onclick="toggleBot()" disabled>
         ⏳ Loading
       </button>
@@ -108,7 +110,7 @@
           <span style="margin-left: 8px;">·</span>
           <span id="pairSignalsLastUpdated" title="When confidence and execution status were last refreshed">—</span>
           <span style="margin-left: 8px;">·</span>
-          <span>Only auto-enabled (≥75%) · Sorted by signal</span>
+          <span>Enabled pairs · Last run from bot</span>
           <a href="#" id="showBotLogsLink" style="margin-left: 10px; color: var(--accent);">Recent logs</a>
         </div>
       </div>
@@ -197,72 +199,6 @@
         <div class="chart-panel" style="flex: 1; overflow-y: auto;">
           <div class="panel-title">⭐ Quick View</div>
           <div id="favoritesPanel" style="display: flex; flex-direction: column; gap: 6px; font-size: 12px;"></div>
-        </div>
-      </div>
-    </div>
-
-
-    <!-- Confidence Check (Background) — Live batch display + countdown only -->
-    <div class="batch-status-section" style="margin: 20px 0;">
-      <div class="panel-title">
-        🔄 Confidence Check (Background)
-        <div class="panel-tools" style="font-size: 11px; color: var(--gray-2);">
-          Auto-enables pairs &gt;75% confidence · Every 5 min
-        </div>
-      </div>
-      
-      <div class="chart-panel" style="padding: 20px;">
-        <!-- During active cycle: live batch processing display with animation -->
-        <div id="batchLiveDisplay" style="display: none; margin-bottom: 12px; padding: 16px; background: var(--gray-3); border: 1px solid var(--accent); border-radius: 6px;">
-          <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
-            <span id="batchStatusDot" class="batch-dot pulse" style="width: 12px; height: 12px; border-radius: 50%; background: var(--accent);"></span>
-            <span id="batchStatusText" style="font-weight: 700; color: var(--accent);">Processing...</span>
-            <span id="batchProgressText" style="color: var(--text); font-size: 13px; font-weight: 600;">Batch 1 of 1</span>
-          </div>
-          <div id="batchCurrentStrategyRow" style="margin-top: 8px; font-size: 12px; color: var(--gray-1);"><strong style="color: var(--accent);">Strategy being checked:</strong> <span id="batchCurrentStrategyName">—</span></div>
-          <div id="batchPairsWithConfidence" style="margin-top: 12px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center;">
-            <!-- Filled by JS: pair name + confidence % for current 5 pairs -->
-          </div>
-          <div style="font-size: 11px; color: var(--gray-1); margin-top: 8px;">Checking all pairs in batches of 5. In <strong>Auto</strong> mode all 3 strategies are run one by one; otherwise only the selected strategy is used. Pairs &gt;75% are auto-enabled for trading.</div>
-        </div>
-        <!-- During 5-min wait: idle + countdown -->
-        <div id="batchIdleDisplay" style="display: flex; align-items: center; gap: 16px; flex-wrap: wrap;">
-          <div style="display: flex; align-items: center; gap: 8px;">
-            <span id="batchIdleDot" class="batch-dot" style="width: 10px; height: 10px; border-radius: 50%; background: var(--gray-2);"></span>
-            <span id="batchIdleText" style="font-size: 12px;">Checking...</span>
-          </div>
-          <div id="batchCountdown" style="color: var(--gray-1); font-size: 12px;">
-            Next cycle in: <span id="batchCountdownVal">—</span>
-          </div>
-        </div>
-        <!-- Last confidence history (checked pairs) — 15 per page, updates when next iteration runs -->
-        <div style="margin-top: 20px; border-top: 1px solid var(--gray-2); padding-top: 16px;">
-          <div style="font-size: 11px; color: var(--gray-1); margin-bottom: 8px;">Last confidence history — last checked pairs; list updates when a new cycle runs</div>
-          <div id="confidenceHistoryContainer">
-            <table class="conf-history-table" style="width: 100%; font-size: 12px; border-collapse: collapse;">
-              <thead>
-                <tr style="border-bottom: 1px solid var(--gray-2);">
-                  <th style="text-align: left; padding: 8px;">Pair</th>
-                  <th style="text-align: right; padding: 8px;">Confidence</th>
-                  <th style="text-align: left; padding: 8px;">Strategy</th>
-                  <th style="text-align: left; padding: 8px;">Bias</th>
-                  <th style="text-align: right; padding: 8px;">RSI</th>
-                  <th style="text-align: left; padding: 8px;">Checked at</th>
-                </tr>
-              </thead>
-              <tbody id="confidenceHistoryBody">
-                <tr><td colspan="6" style="padding: 12px; color: var(--gray-1);">Loading…</td></tr>
-              </tbody>
-            </table>
-          </div>
-          <div id="confidenceHistoryPagination" style="display: flex; align-items: center; justify-content: space-between; margin-top: 10px; font-size: 11px; color: var(--gray-1);">
-            <span id="confidenceHistorySummary">—</span>
-            <div style="display: flex; gap: 8px;">
-              <button type="button" id="confHistoryPrev" disabled style="padding: 4px 10px; cursor: pointer;">Prev</button>
-              <span id="confHistoryPageInfo">Page 1</span>
-              <button type="button" id="confHistoryNext" disabled style="padding: 4px 10px; cursor: pointer;">Next</button>
-            </div>
-          </div>
         </div>
       </div>
     </div>
@@ -365,7 +301,6 @@
   <script src="js/data.js"></script>
   <script src="js/ui.js"></script>
   <script src="js/pair-mode.js"></script>
-  <script src="js/batch-status.js"></script>
   <script src="js/init.js"></script>
 
 </body>

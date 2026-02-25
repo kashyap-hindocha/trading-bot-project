@@ -25,32 +25,6 @@ import time
 # IST timezone (UTC+5:30)
 IST = timezone(timedelta(hours=5, minutes=30))
 
-# Confidence threshold for auto-enable/disable (75%)
-CONFIDENCE_THRESHOLD = 75.0
-BATCH_SIZE = 5
-BATCH_DELAY_SEC = 2   # Seconds between each batch of 5 to avoid API exhaustion (~27 batches * 2s ≈ 54s for 135 pairs)
-CYCLE_INTERVAL_SEC = 300  # 5 minutes — check enabled pairs confidence every 5 min
-
-# Only one batch cycle at a time (prevents overlapping runs)
-_batch_cycle_lock = threading.Lock()
-
-# Batch checker state (for UI)
-CONFIDENCE_HISTORY_MAX = 500  # Keep last N confidence results for history
-_batch_state = {
-    "current_batch": [],
-    "current_batch_results": [],   # [{pair, readiness, bias, rsi, strategy_name}, ...] for the 5 being checked
-    "batch_index": 0,
-    "total_batches": 0,
-    "total_pairs": 0,
-    "current_strategy": None,      # Strategy key being used in this batch (for UI)
-    "is_processing": False,
-    "cycle_started_at": None,
-    "next_run_at": None,
-    "last_run_at": None,
-    "last_error": None,
-    "confidence_history": [],     # Last confidence check results: [{pair, readiness, strategy_name, checked_at}, ...]
-}
-
 app = Flask(__name__)
 CORS(app)
 
@@ -535,32 +509,33 @@ def trading_mode():
 def strategies():
     if request.method == "GET":
         try:
-            batch_mode = db.get_batch_strategy_mode() or "enhanced_v2"
+            active = db.get_active_strategy()
+            confidence_threshold = db.get_confidence_threshold()
             if not STRATEGY_MANAGER_LOADED:
                 return jsonify({
                     "strategies": [],
-                    "active": None,
-                    "batch_mode": batch_mode,
+                    "active": active,
+                    "confidence_threshold": confidence_threshold,
                     "error": "Strategy manager not loaded"
                 }), 500
 
             available_strategies = strategy_manager.strategy_manager.get_available_strategies()
-            active_strategy = strategy_manager.strategy_manager.get_active_strategy_name()
             result = {
                 "strategies": [{"name": s["name"], "displayName": s.get("display_name", s["name"]), "description": s["description"]} for s in available_strategies],
-                "active": active_strategy,
-                "batch_mode": batch_mode,
+                "active": active,
+                "confidence_threshold": confidence_threshold,
             }
             return jsonify(result)
         except Exception as e:
             try:
-                batch_mode = db.get_batch_strategy_mode() or "enhanced_v2"
+                active = db.get_active_strategy()
+                confidence_threshold = db.get_confidence_threshold()
             except Exception:
-                batch_mode = "enhanced_v2"
+                active, confidence_threshold = "enhanced_v2", 80.0
             return jsonify({
                 "strategies": [],
-                "active": None,
-                "batch_mode": batch_mode,
+                "active": active,
+                "confidence_threshold": confidence_threshold,
                 "error": str(e)
             }), 500
 
@@ -569,23 +544,26 @@ def strategies():
 
     data = request.get_json() or {}
     strategy_name = str(data.get("strategy", "")).strip()
-    
-    if not strategy_name:
-        return jsonify({"error": "strategy name is required"}), 400
+    threshold_raw = data.get("confidence_threshold")
 
     try:
-        if strategy_name == "auto":
-            db.set_batch_strategy_mode("auto")
-            db.log_event("INFO", "Batch checker mode set to Auto (cycle all 3 strategies)")
-            return jsonify({"success": True, "strategy": "auto", "batch_mode": "auto"})
-        if strategy_name in getattr(strategy_manager.strategy_manager, "strategies", {}):
+        if strategy_name:
+            if strategy_name not in getattr(strategy_manager.strategy_manager, "strategies", {}):
+                return jsonify({"error": f"Unknown strategy: {strategy_name}"}), 400
             strategy_manager.strategy_manager.set_active_strategy(strategy_name)
-            db.set_batch_strategy_mode(strategy_name)
-            db.log_event("INFO", f"Active strategy and batch mode set to {strategy_name}")
-            return jsonify({"success": True, "strategy": strategy_name, "batch_mode": strategy_name})
-        return jsonify({"error": f"Unknown strategy: {strategy_name}"}), 400
-    except Exception as e:
-        return jsonify({"error": str(e)}), 400
+            db.set_active_strategy(strategy_name)
+            db.log_event("INFO", f"Active strategy set to {strategy_name}")
+        if threshold_raw is not None:
+            threshold = float(threshold_raw)
+            if not (0 <= threshold <= 100):
+                return jsonify({"error": "confidence_threshold must be between 0 and 100"}), 400
+            db.set_confidence_threshold(threshold)
+            db.log_event("INFO", f"Confidence threshold set to {threshold}%")
+        active = db.get_active_strategy()
+        confidence_threshold = db.get_confidence_threshold()
+        return jsonify({"success": True, "active": active, "confidence_threshold": confidence_threshold})
+    except (TypeError, ValueError) as e:
+        return jsonify({"error": f"Invalid value: {e}"}), 400
 
 
 @app.route("/api/paper/balance")
@@ -606,86 +584,6 @@ def paper_reset():
         return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
 
-
-
-def _ema(values, period):
-    if len(values) < period:
-        return []
-    k = 2 / (period + 1)
-    ema = [sum(values[:period]) / period]
-    for v in values[period:]:
-        ema.append(v * k + ema[-1] * (1 - k))
-    return ema
-
-
-def _rsi(closes, period):
-    if len(closes) < period + 1:
-        return 50.0
-    deltas = [closes[i] - closes[i - 1] for i in range(1, len(closes))]
-    gains = [d if d > 0 else 0 for d in deltas[-period:]]
-    losses = [-d if d < 0 else 0 for d in deltas[-period:]]
-    avg_gain = sum(gains) / period
-    avg_loss = sum(losses) / period
-    if avg_loss == 0:
-        return 100.0
-    rs = avg_gain / avg_loss
-    return round(100 - (100 / (1 + rs)), 2)
-
-
-def _compute_readiness(closes):
-    """
-    Compute readiness as PROXIMITY to trade conditions.
-    Shows how close we are to executing (90% = ready to execute).
-    """
-    active_strategy = strategy_manager.strategy_manager.get_active_strategy()
-    if not active_strategy:
-        return None
-    
-    config = active_strategy.get_config()
-    ema_fast_series = _ema(closes, config["ema_fast"])
-    ema_slow_series = _ema(closes, config["ema_slow"])
-    if not ema_fast_series or not ema_slow_series:
-        return None
-
-    ema_fast = ema_fast_series[-1]
-    ema_slow = ema_slow_series[-1]
-    rsi = _rsi(closes, config["rsi_period"])
-    overbought = config["rsi_overbought"]
-    oversold = config["rsi_oversold"]
-
-    price = closes[-1] if closes else 0
-    gap = abs(ema_fast - ema_slow)
-    gap_pct = (gap / price) if price else 0
-    gap_max = 0.003  # Max gap % for scoring
-
-    def score_gap(local_gap):
-        """Score how close EMAs are (closer = higher score)"""
-        if local_gap >= gap_max:
-            return 0.0
-        return max(0.0, 1 - (local_gap / gap_max))
-
-    # EMA proximity scores (higher when EMAs are close)
-    ema_buy_score = score_gap(gap_pct) if ema_fast <= ema_slow else 0.0
-    ema_sell_score = score_gap(gap_pct) if ema_fast >= ema_slow else 0.0
-
-    # RSI alignment scores
-    rsi_band = 20.0
-    rsi_buy_score = 1.0 if rsi <= oversold else max(0.0, 1 - ((rsi - oversold) / rsi_band))
-    rsi_sell_score = 1.0 if rsi >= overbought else max(0.0, 1 - ((overbought - rsi) / rsi_band))
-
-    # Combine scores (60% EMA proximity, 40% RSI alignment)
-    buy_readiness = (ema_buy_score * 0.6 + rsi_buy_score * 0.4) * 100
-    sell_readiness = (ema_sell_score * 0.6 + rsi_sell_score * 0.4) * 100
-
-    readiness = round(max(buy_readiness, sell_readiness), 1)
-    bias = "BUY" if buy_readiness >= sell_readiness else "SELL"
-
-    return {
-        "readiness": readiness,
-        "bias": bias,
-        "ema_gap_pct": round(gap_pct * 100, 3),
-        "rsi": rsi,
-    }
 
 
 def _get_coindcx_client():
@@ -724,29 +622,9 @@ def _seed_pair_config_if_empty():
         app.logger.warning(f"Could not seed pair_config: {e}")
 
 
-def _batch_compute_readiness(pairs, client, interval):
-    """Compute readiness for exactly one batch of up to 5 pairs. Never more than BATCH_SIZE."""
-    # Enforce exactly 5 (or fewer for last batch): take first BATCH_SIZE only
-    batch_list = (list(pairs)[:BATCH_SIZE]) if pairs else []
-    results = []
-    for pair in batch_list:
-        try:
-            candles = client.get_candles(pair, interval, limit=150)
-            closes = [c.get("close") for c in candles if c.get("close") is not None]
-            r = _compute_readiness(closes)
-            if r is None:
-                results.append({"pair": pair, "readiness": 0.0, "bias": None, "ema_gap_pct": None, "rsi": None})
-            else:
-                results.append({"pair": pair, **r})
-        except Exception as e:
-            app.logger.warning(f"Readiness failed for {pair}: {e}")
-            results.append({"pair": pair, "readiness": 0.0, "bias": None, "ema_gap_pct": None, "rsi": None})
-    return results
-
-
 def _get_strategy_instance(strategy_key):
-    """Return a strategy instance by key (e.g. enhanced_v2, bollinger_rsi, breakout_vol)."""
-    if not STRATEGY_MANAGER_LOADED:
+    """Return a strategy instance by key (e.g. enhanced_v2). Used by manual execute."""
+    if not STRATEGY_MANAGER_LOADED or not strategy_key:
         return None
     try:
         strategies = getattr(strategy_manager.strategy_manager, "strategies", {})
@@ -756,279 +634,6 @@ def _get_strategy_instance(strategy_key):
     except Exception as e:
         app.logger.warning(f"Could not get strategy {strategy_key}: {e}")
     return None
-
-
-# Strategy keys used for "best of 3" confidence in pair_signals (must match batch order)
-PAIR_SIGNALS_STRATEGY_ORDER = ["enhanced_v2", "bollinger_rsi", "breakout_vol"]
-
-
-def _compute_best_confidence_all_strategies(candles_norm):
-    """
-    Run all 3 strategies on the same candles and return (best_confidence, best_strategy_key).
-    Used so the Trading Pairs UI shows the highest confidence among strategies and updates with live data.
-    """
-    best_confidence = 0.0
-    best_strategy_key = None
-    for key in PAIR_SIGNALS_STRATEGY_ORDER:
-        strat = _get_strategy_instance(key)
-        if not strat:
-            continue
-        try:
-            ev = strat.evaluate(candles_norm, return_confidence=True)
-            if ev and isinstance(ev, dict):
-                c = float(ev.get("confidence", 0))
-                if c > best_confidence:
-                    best_confidence = c
-                    best_strategy_key = key
-        except Exception:
-            continue
-    return (round(best_confidence, 1), best_strategy_key)
-
-
-def _batch_compute_readiness_with_strategy(pairs, client, interval, strategy_instance, strategy_key):
-    """
-    Compute confidence (readiness) for exactly one batch of up to 5 pairs using the given strategy.
-    Returns list of {pair, readiness (confidence %), strategy_name, bias, ...}.
-    """
-    batch_list = (list(pairs)[:BATCH_SIZE]) if pairs else []
-    results = []
-    strategy_name = strategy_instance.get_name() if strategy_instance else (strategy_key or "")
-    for pair in batch_list:
-        try:
-            candles = client.get_candles(pair, interval, limit=200)
-            if not candles or len(candles) < 50:
-                results.append({
-                    "pair": pair, "readiness": 0.0, "bias": None, "strategy_name": strategy_name,
-                    "ema_gap_pct": None, "rsi": None,
-                })
-                continue
-            # Normalize candle dicts (ensure close, high, low, volume, etc.)
-            candles = [
-                {"open": c.get("open"), "high": c.get("high"), "low": c.get("low"),
-                 "close": c.get("close"), "volume": c.get("volume", 0), "time": c.get("time")}
-                for c in candles
-            ]
-            ev = strategy_instance.evaluate(candles, return_confidence=True)
-            if ev and isinstance(ev, dict):
-                confidence = float(ev.get("confidence", 0))
-                signal = ev.get("signal")
-                bias = "BUY" if signal == "LONG" else ("SELL" if signal == "SHORT" else None)
-                results.append({
-                    "pair": pair, "readiness": round(confidence, 1), "bias": bias,
-                    "strategy_name": strategy_name, "strategy_key": strategy_key,
-                    "ema_gap_pct": None, "rsi": None,
-                })
-            else:
-                results.append({
-                    "pair": pair, "readiness": 0.0, "bias": None, "strategy_name": strategy_name,
-                    "ema_gap_pct": None, "rsi": None,
-                })
-        except Exception as e:
-            app.logger.warning(f"Strategy readiness failed for {pair} ({strategy_key}): {e}")
-            results.append({
-                "pair": pair, "readiness": 0.0, "bias": None, "strategy_name": strategy_name,
-                "ema_gap_pct": None, "rsi": None,
-            })
-    return results
-
-
-def _run_batch_cycle():
-    """Run one full confidence-check cycle using strategy-based confidence.
-    Batch mode 'auto': iterate strategies [enhanced_v2, bollinger_rsi, breakout_vol], for each
-    strategy run through ALL pairs in batches of 5. Single-strategy mode: use only that strategy.
-    Enable pair when confidence > 75%; store enabled_by_strategy and enabled_at_confidence.
-    """
-    global _batch_state
-    if not _batch_cycle_lock.acquire(blocking=False):
-        app.logger.info("Batch cycle already running, skipping")
-        return
-    try:
-        if not STRATEGY_MANAGER_LOADED:
-            _batch_state["last_error"] = "Strategy manager not loaded"
-            return
-
-        _batch_state["is_processing"] = True
-        _batch_state["cycle_started_at"] = datetime.now(IST).isoformat()
-        _batch_state["last_error"] = None
-
-        try:
-            _seed_pair_config_if_empty()
-            all_configs = db.get_all_pair_configs()
-            if not all_configs:
-                _batch_state["is_processing"] = False
-                _batch_state["last_run_at"] = datetime.now(IST).isoformat()
-                return
-
-            all_pairs = [c["pair"] for c in all_configs]
-            total_pairs = len(all_pairs)
-            total_batches_per_strategy = (total_pairs + BATCH_SIZE - 1) // BATCH_SIZE if total_pairs else 0
-            client = _get_coindcx_client()
-            # Map pair -> strategy key that enabled it; only disable when THAT strategy says < 75%
-            auto_enabled_list = db.get_auto_enabled_pairs()
-            pair_enabled_by = {c["pair"]: c.get("enabled_by_strategy") for c in auto_enabled_list}
-
-            batch_mode = db.get_batch_strategy_mode() or "enhanced_v2"
-            if batch_mode == "auto":
-                strategy_order = ["enhanced_v2", "bollinger_rsi", "breakout_vol"]
-                strategies_to_run = [
-                    (key, _get_strategy_instance(key)) for key in strategy_order
-                    if _get_strategy_instance(key) is not None
-                ]
-                if not strategies_to_run:
-                    _batch_state["last_error"] = "No strategies available for auto mode"
-                    return
-                total_batches = total_batches_per_strategy * len(strategies_to_run)
-                batch_counter = 0
-                for strategy_key, strategy_instance in strategies_to_run:
-                    interval = strategy_instance.get_config().get("interval", "5m")
-                    _batch_state["current_strategy"] = strategy_key
-                    for batch_start in range(0, total_pairs, BATCH_SIZE):
-                        batch = all_pairs[batch_start : batch_start + BATCH_SIZE]
-                        if len(batch) > BATCH_SIZE:
-                            batch = batch[:BATCH_SIZE]
-                        batch_index_1based = (batch_start // BATCH_SIZE) + 1
-                        batch_counter += 1
-                        _batch_state["current_batch"] = list(batch)
-                        _batch_state["batch_index"] = batch_counter
-                        _batch_state["total_batches"] = total_batches
-                        _batch_state["total_pairs"] = total_pairs
-                        results = _batch_compute_readiness_with_strategy(
-                            batch, client, interval, strategy_instance, strategy_key
-                        )
-                        _batch_state["current_batch_results"] = list(results)
-                        now_iso = datetime.now(IST).isoformat()
-                        for r in results:
-                            entry = {**r, "checked_at": now_iso}
-                            _batch_state["confidence_history"].append(entry)
-                        _batch_state["confidence_history"] = _batch_state["confidence_history"][-CONFIDENCE_HISTORY_MAX:]
-                        for r in results:
-                            pair = r.get("pair", "")
-                            readiness = r.get("readiness", 0)
-                            strat_key = r.get("strategy_key", strategy_key)
-                            if readiness > CONFIDENCE_THRESHOLD:
-                                db.update_pair_auto_status(pair, 1, 1, enabled_by_strategy=strat_key, enabled_at_confidence=readiness)
-                                db.log_event("INFO", f"Auto-enabled {pair} ({strat_key} {readiness:.1f}% > {CONFIDENCE_THRESHOLD}%)")
-                                pair_enabled_by[pair] = strat_key
-                            elif pair_enabled_by.get(pair) == strat_key and readiness < CONFIDENCE_THRESHOLD:
-                                db.update_pair_auto_status(pair, 0, 0, enabled_by_strategy=None, enabled_at_confidence=None)
-                                db.log_event("INFO", f"Auto-disabled {pair} ({strat_key} {readiness:.1f}% < {CONFIDENCE_THRESHOLD}%, was enabled by this strategy)")
-                                del pair_enabled_by[pair]
-                        if batch_start + BATCH_SIZE < total_pairs or strategy_key != strategies_to_run[-1][0]:
-                            time.sleep(BATCH_DELAY_SEC)
-            else:
-                strategy_instance = _get_strategy_instance(batch_mode)
-                if not strategy_instance:
-                    _batch_state["last_error"] = f"Strategy {batch_mode} not found"
-                    return
-                interval = strategy_instance.get_config().get("interval", "5m")
-                total_batches = total_batches_per_strategy
-                _batch_state["current_strategy"] = batch_mode
-                for batch_start in range(0, total_pairs, BATCH_SIZE):
-                    batch = all_pairs[batch_start : batch_start + BATCH_SIZE]
-                    if len(batch) > BATCH_SIZE:
-                        batch = batch[:BATCH_SIZE]
-                    batch_index_1based = (batch_start // BATCH_SIZE) + 1
-                    _batch_state["current_batch"] = list(batch)
-                    _batch_state["batch_index"] = batch_index_1based
-                    _batch_state["total_batches"] = total_batches
-                    _batch_state["total_pairs"] = total_pairs
-                    results = _batch_compute_readiness_with_strategy(
-                        batch, client, interval, strategy_instance, batch_mode
-                    )
-                    _batch_state["current_batch_results"] = list(results)
-                    now_iso = datetime.now(IST).isoformat()
-                    for r in results:
-                        entry = {**r, "checked_at": now_iso}
-                        _batch_state["confidence_history"].append(entry)
-                    _batch_state["confidence_history"] = _batch_state["confidence_history"][-CONFIDENCE_HISTORY_MAX:]
-                    for r in results:
-                        pair = r.get("pair", "")
-                        readiness = r.get("readiness", 0)
-                        if readiness > CONFIDENCE_THRESHOLD:
-                            db.update_pair_auto_status(pair, 1, 1, enabled_by_strategy=batch_mode, enabled_at_confidence=readiness)
-                            db.log_event("INFO", f"Auto-enabled {pair} ({batch_mode} {readiness:.1f}% > {CONFIDENCE_THRESHOLD}%)")
-                            pair_enabled_by[pair] = batch_mode
-                        elif pair_enabled_by.get(pair) == batch_mode and readiness < CONFIDENCE_THRESHOLD:
-                            db.update_pair_auto_status(pair, 0, 0, enabled_by_strategy=None, enabled_at_confidence=None)
-                            db.log_event("INFO", f"Auto-disabled {pair} ({batch_mode} {readiness:.1f}% < {CONFIDENCE_THRESHOLD}%)")
-                            del pair_enabled_by[pair]
-                    if batch_start + BATCH_SIZE < total_pairs:
-                        time.sleep(BATCH_DELAY_SEC)
-
-            _batch_state["current_batch"] = []
-            _batch_state["current_batch_results"] = []
-            _batch_state["batch_index"] = 0
-            _batch_state["current_strategy"] = None
-        except Exception as e:
-            _batch_state["last_error"] = str(e)
-            app.logger.error(f"Batch cycle error: {e}")
-        finally:
-            _batch_state["is_processing"] = False
-            _batch_state["last_run_at"] = datetime.now(IST).isoformat()
-    finally:
-        _batch_cycle_lock.release()
-
-
-def _batch_checker_loop():
-    """Background thread: run full cycle then wait 5 min."""
-    import time
-    while True:
-        try:
-            _run_batch_cycle()
-        except Exception as e:
-            app.logger.error(f"Batch checker error: {e}")
-            _batch_state["last_error"] = str(e)
-        next_run = datetime.now(IST) + timedelta(seconds=CYCLE_INTERVAL_SEC)
-        _batch_state["next_run_at"] = next_run.isoformat()
-        _batch_state["seconds_until_next"] = CYCLE_INTERVAL_SEC
-        time.sleep(CYCLE_INTERVAL_SEC)
-
-
-def _start_batch_checker():
-    """Start the batch checker background thread."""
-    t = threading.Thread(target=_batch_checker_loop, daemon=True)
-    t.start()
-    app.logger.info("Batch confidence checker started (5 min cycle)")
-
-
-@app.route("/api/signal/readiness")
-def signal_readiness():
-    try:
-        pairs_raw = request.args.get("pairs", "")
-        pairs = [p.strip() for p in pairs_raw.split(",") if p.strip()]
-        if not pairs:
-            return jsonify([])
-
-        client = CoinDCXREST("", "")
-        results = []
-        active_strategy = strategy_manager.strategy_manager.get_active_strategy()
-        interval = active_strategy.get_config().get("interval", "1m") if active_strategy else "1m"
-        
-        # Max 5 pairs per request to avoid API exhaustion and align with batch-of-5 checking
-        for pair in pairs[:5]:
-            try:
-                candles = client.get_candles(pair, interval, limit=150)
-                closes = [c.get("close") for c in candles if c.get("close") is not None]
-                readiness = _compute_readiness(closes)
-                # _compute_readiness may return None if not enough data; treat that as 0%
-                if readiness is None:
-                    results.append({
-                        "pair": pair,
-                        "readiness": 0.0,
-                        "bias": None,
-                        "ema_gap_pct": None,
-                        "rsi": None,
-                    })
-                else:
-                    # Even readiness 0.0 is meaningful; don't filter it out
-                    results.append({"pair": pair, **readiness})
-            except Exception as e:
-                app.logger.warning(f"Readiness failed for {pair}: {e}")
-        return jsonify(results)
-    except Exception as e:
-        import traceback
-        app.logger.error(f"Readiness endpoint failed: {e}")
-        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
 
 @app.route("/api/candles")
@@ -1139,13 +744,7 @@ def bot_start():
         )
         if result.returncode == 0:
             db.log_event("INFO", "Bot started manually from dashboard")
-            # Trigger one batch cycle so pairs get re-evaluated (batch-of-5) after start
-            try:
-                t = threading.Thread(target=_run_batch_cycle, daemon=True)
-                t.start()
-            except Exception as e:
-                app.logger.warning(f"Batch trigger on start: {e}")
-            return jsonify({"success": True, "message": "Bot started; confidence check triggered"})
+            return jsonify({"success": True, "message": "Bot started"})
         return jsonify({"success": False, "message": result.stderr or "Failed"}), 500
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 500
@@ -1256,8 +855,8 @@ def paper_execute_trade():
         if not current_price:
             return jsonify({"success": False, "error": "Could not get current price"}), 400
 
-        enabled_by_strategy = pair_config.get("enabled_by_strategy")
-        strat_instance = _get_strategy_instance(enabled_by_strategy) if enabled_by_strategy else None
+        active_strategy_key = db.get_active_strategy()
+        strat_instance = _get_strategy_instance(active_strategy_key)
         if not strat_instance and STRATEGY_MANAGER_LOADED:
             strat_instance = strategy_manager.strategy_manager.get_active_strategy()
         if not strat_instance:
@@ -1305,7 +904,7 @@ def paper_execute_trade():
         side = "buy" if signal == "LONG" else "sell"
         order_id = f"PAPER-MANUAL-{int(time.time() * 1000)}"
         position_id = f"PAPER-POS-{order_id}"
-        strategy_key = (pair_config.get("enabled_by_strategy") or (strategy_manager.strategy_manager.get_active_strategy_name() if STRATEGY_MANAGER_LOADED else "")) or "enhanced_v2"
+        strategy_key = db.get_active_strategy()
 
         db.set_paper_wallet_balance(wallet_balance - entry_fee)
         db.insert_paper_trade(
@@ -1498,121 +1097,6 @@ def pairs_config_bulk():
         return jsonify({"success": True, "message": f"Updated {len(pairs)} pairs"})
     except Exception as e:
         app.logger.error(f"Error bulk updating pairs: {e}")
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/batch/status")
-def batch_status():
-    """Get batch checker status for UI: current batch, is_processing, countdown, auto-enabled pairs."""
-    try:
-        auto_enabled = db.get_auto_enabled_pairs()
-        # Enrich with confidence from pair_signals / readiness - we use last known from batch
-        # For now return configs; UI can fetch readiness separately for bars
-        now = datetime.now(IST)
-        next_run = _batch_state.get("next_run_at")
-        next_run_dt = datetime.fromisoformat(next_run) if next_run else None
-        seconds_until_next = int((next_run_dt - now).total_seconds()) if next_run_dt and next_run_dt > now else CYCLE_INTERVAL_SEC
-
-        return jsonify({
-            "current_batch": _batch_state.get("current_batch", []),
-            "current_batch_results": _batch_state.get("current_batch_results", []),
-            "batch_index": _batch_state.get("batch_index", 0),
-            "total_batches": _batch_state.get("total_batches", 0),
-            "total_pairs": _batch_state.get("total_pairs", 0),
-            "current_strategy": _batch_state.get("current_strategy"),
-            "batch_strategy_mode": db.get_batch_strategy_mode(),
-            "is_processing": _batch_state.get("is_processing", False),
-            "cycle_started_at": _batch_state.get("cycle_started_at"),
-            "next_run_at": _batch_state.get("next_run_at"),
-            "seconds_until_next": max(0, seconds_until_next),
-            "last_run_at": _batch_state.get("last_run_at"),
-            "last_error": _batch_state.get("last_error"),
-            "auto_enabled_pairs": [
-                {
-                    "pair": c["pair"],
-                    "leverage": c.get("leverage", 5),
-                    "quantity": c.get("quantity", 0.001),
-                    "inr_amount": c.get("inr_amount", 300),
-                    "enabled_by_strategy": c.get("enabled_by_strategy"),
-                    "enabled_at_confidence": c.get("enabled_at_confidence"),
-                }
-                for c in auto_enabled
-            ],
-        })
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/batch/confidence_history")
-def batch_confidence_history():
-    """Paginated last confidence check results (15 per page). Updates when next iteration runs."""
-    try:
-        page = max(1, int(request.args.get("page", 1)))
-        per_page = min(50, max(1, int(request.args.get("per_page", 15))))
-        history = list(_batch_state.get("confidence_history", []))
-        total = len(history)
-        # Newest last in list; show newest first in UI
-        history_reversed = list(reversed(history))
-        start = (page - 1) * per_page
-        chunk = history_reversed[start : start + per_page]
-        return jsonify({
-            "items": chunk,
-            "page": page,
-            "per_page": per_page,
-            "total": total,
-            "total_pages": (total + per_page - 1) // per_page if total else 0,
-        })
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/batch/trigger", methods=["POST"])
-def batch_trigger():
-    """Run one confidence-check cycle now (e.g. after bot start)."""
-    try:
-        t = threading.Thread(target=_run_batch_cycle, daemon=True)
-        t.start()
-        return jsonify({"success": True, "message": "Confidence check cycle started"})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/batch/auto-enabled")
-def batch_auto_enabled():
-    """Get auto-enabled pairs with readiness/confidence for review panel."""
-    try:
-        pairs = db.get_auto_enabled_pairs()
-        if not pairs:
-            return jsonify([])
-
-        interval = "1m"
-        if STRATEGY_MANAGER_LOADED:
-            try:
-                active = strategy_manager.strategy_manager.get_active_strategy()
-                if active:
-                    interval = active.get_config().get("interval", "1m")
-            except Exception:
-                pass
-        client = _get_coindcx_client()
-        pair_names = [p["pair"] for p in pairs]
-        results = _batch_compute_readiness(pair_names, client, interval)
-        readiness_map = {r["pair"]: r for r in results}
-
-        result = []
-        for p in pairs:
-            r = readiness_map.get(p["pair"], {})
-            result.append({
-                "pair": p["pair"],
-                "readiness": r.get("readiness", 0),
-                "bias": r.get("bias"),
-                "rsi": r.get("rsi"),
-                "ema_gap_pct": r.get("ema_gap_pct"),
-                "leverage": p.get("leverage", 5),
-                "quantity": p.get("quantity", 0.001),
-                "inr_amount": p.get("inr_amount", 300),
-            })
-        return jsonify(result)
-    except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
@@ -1842,115 +1326,28 @@ def pair_mode():
 
 @app.route("/api/pair_signals")
 def pair_signals():
-    """Get live signal strength for enabled pairs: run all 3 strategies per pair, show highest confidence (refreshes every poll)."""
+    """Return enabled pairs with last run status from bot (no server-side strategy run)."""
     try:
         enabled_pairs = db.get_enabled_pairs()
-        if not enabled_pairs:
-            app.logger.info("No enabled pairs found. Pairs are auto-enabled when confidence > 75%.")
-            return jsonify({
-                "pairs": [],
-                "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-            })
-
-        client = CoinDCXREST("", "")
+        exec_status_all = db.get_pair_execution_status_all()
         results = []
-        pairs_to_process = enabled_pairs[:10]
-        app.logger.info(f"Processing {len(pairs_to_process)} enabled pairs (live candles, best of 3 strategies)")
-
-        for idx, pair_config in enumerate(pairs_to_process, 1):
-            pair = pair_config.get("pair")
+        for cfg in enabled_pairs:
+            pair = cfg.get("pair")
             if not pair:
                 continue
-            enabled_by_strategy = pair_config.get("enabled_by_strategy")
-
-            try:
-                app.logger.debug(f"[{idx}/{len(pairs_to_process)}] Fetching candles for {pair}")
-                candles = client.get_candles(pair, "5m", limit=200)
-                if not candles or len(candles) < 50:
-                    app.logger.info(
-                        f"[pair_signals] {pair}: SKIP (candles len={len(candles) if candles else 0}), "
-                        f"using enabled_at_confidence={pair_config.get('enabled_at_confidence')}"
-                    )
-                    out = {
-                        "pair": pair,
-                        "signal_strength": float(pair_config.get("enabled_at_confidence") or 0),
-                        "enabled": pair_config.get("enabled", 0),
-                        "leverage": pair_config.get("leverage", 5),
-                        "quantity": pair_config.get("quantity", 0.001),
-                        "inr_amount": pair_config.get("inr_amount", 300.0),
-                        "enabled_by_strategy": enabled_by_strategy,
-                        "enabled_at_confidence": pair_config.get("enabled_at_confidence"),
-                        "best_strategy": None,
-                    }
-                    try:
-                        exec_status = db.get_pair_execution_status_all().get(pair, {})
-                        out["last_closed_at"] = exec_status.get("last_closed_at")
-                        out["last_error"] = exec_status.get("last_error")
-                    except Exception:
-                        pass
-                    results.append(out)
-                    continue
-
-                candles_norm = [
-                    {"open": c.get("open"), "high": c.get("high"), "low": c.get("low"),
-                     "close": c.get("close"), "volume": c.get("volume", 0), "time": c.get("time")}
-                    for c in candles
-                ]
-                last_c = candles[-1]
-                last_close = last_c.get("close") or last_c.get("c")
-                last_time = last_c.get("time") or last_c.get("t")
-                # Run all 3 strategies and use highest confidence so display updates with live data
-                best_confidence, best_strategy_key = _compute_best_confidence_all_strategies(candles_norm)
-                app.logger.info(
-                    f"[pair_signals] {pair}: candles={len(candles)} last_close={last_close} last_time={last_time} "
-                    f"-> best_confidence={best_confidence}% ({best_strategy_key})"
-                )
-
-                out = {
-                    "pair": pair,
-                    "signal_strength": best_confidence,
-                    "enabled": pair_config.get("enabled", 0),
-                    "leverage": pair_config.get("leverage", 5),
-                    "quantity": pair_config.get("quantity", 0.001),
-                    "inr_amount": pair_config.get("inr_amount", 300.0),
-                    "enabled_by_strategy": enabled_by_strategy,
-                    "enabled_at_confidence": pair_config.get("enabled_at_confidence"),
-                    "best_strategy": best_strategy_key,
-                    "last_price": candles[-1].get("close") if candles else None,
-                }
-                try:
-                    exec_status = db.get_pair_execution_status_all().get(pair, {})
-                    out["last_closed_at"] = exec_status.get("last_closed_at")
-                    out["last_error"] = exec_status.get("last_error")
-                    out["last_signal"] = exec_status.get("last_signal")
-                except Exception:
-                    pass
-                results.append(out)
-                app.logger.debug(f"[{idx}/{len(pairs_to_process)}] {pair}: live best={best_confidence:.1f}% ({best_strategy_key})")
-            except Exception as e:
-                app.logger.warning(f"Confidence calculation failed for {pair}: {e}")
-                out = {
-                    "pair": pair,
-                    "signal_strength": float(pair_config.get("enabled_at_confidence") or 0),
-                    "enabled": pair_config.get("enabled", 0),
-                    "leverage": pair_config.get("leverage", 5),
-                    "quantity": pair_config.get("quantity", 0.001),
-                    "inr_amount": pair_config.get("inr_amount", 300.0),
-                    "enabled_by_strategy": enabled_by_strategy,
-                    "enabled_at_confidence": pair_config.get("enabled_at_confidence"),
-                    "best_strategy": None,
-                }
-                try:
-                    exec_status = db.get_pair_execution_status_all().get(pair, {})
-                    out["last_closed_at"] = exec_status.get("last_closed_at")
-                    out["last_error"] = exec_status.get("last_error")
-                except Exception:
-                    pass
-                results.append(out)
-
-        results.sort(key=lambda x: x["signal_strength"], reverse=True)
-        app.logger.info(f"Pair signals ready: {len(results)} pairs, top: {results[0]['signal_strength']:.1f}% ({results[0]['pair']})" if results else "No pairs processed")
-
+            st = exec_status_all.get(pair, {})
+            results.append({
+                "pair": pair,
+                "signal_strength": float(st.get("last_confidence") or 0),
+                "enabled": cfg.get("enabled", 1),
+                "leverage": cfg.get("leverage", 5),
+                "quantity": cfg.get("quantity", 0.001),
+                "inr_amount": cfg.get("inr_amount", 300.0),
+                "last_closed_at": st.get("last_closed_at"),
+                "last_signal": st.get("last_signal"),
+                "last_confidence": st.get("last_confidence"),
+                "last_error": st.get("last_error"),
+            })
         return jsonify({
             "pairs": results,
             "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -2211,9 +1608,6 @@ def debug_positions():
 
 
 
-
-# Start batch checker on module load (works with both app.run and gunicorn)
-_start_batch_checker()
 
 if __name__ == "__main__":
     # When run as "python app.py": enable SocketIO + live chart relay. When run under gunicorn, app stays plain Flask (no 502).
