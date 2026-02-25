@@ -106,7 +106,7 @@
       <div class="panel-title">
         ⚙️ Pair selection
         <div class="panel-tools" style="font-size: 11px; color: var(--gray-2);">
-          Toggle ON to let the bot trade this pair (max 3 open at a time). Click Save to apply.
+          Toggle ON to let the bot trade this pair (max 3 open at a time). <strong>Click Save changes</strong> to apply — otherwise Execute (paper) may return 400.
         </div>
       </div>
       <div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px;">
@@ -128,9 +128,11 @@
           <span style="margin-left: 8px;">·</span>
           <span id="pairSignalsLastUpdated" title="When status was last refreshed">—</span>
           <span style="margin-left: 8px;">·</span>
-          <span>Confidence is evaluated at each 5m candle close (per pair).</span>
           <a href="#" id="showBotLogsLink" style="margin-left: 10px; color: var(--accent);">Recent logs</a>
         </div>
+      </div>
+      <div style="font-size: 11px; color: var(--accent); margin-bottom: 8px; padding: 4px 0;">
+        <strong>When confidence is checked:</strong> At each <strong>5m candle close</strong> (per enabled pair). See countdown above for next run. Execute (paper) requires MODE: PAPER and pair enabled.
       </div>
       <div id="pairSignalsContainer" style="display: flex; gap: 10px; flex-wrap: wrap;">
         <div style="color: var(--gray-2); font-size: 12px; padding: 10px;">Loading pairs...</div>

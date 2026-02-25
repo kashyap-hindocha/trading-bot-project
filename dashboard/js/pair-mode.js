@@ -134,22 +134,36 @@ async function executeTradeForPair(pair, buttonEl) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ pair: pair }),
         });
-        const data = await res.json();
-        if (data.success) {
+        let data = {};
+        try {
+            data = await res.json();
+        } catch (_) {
+            data = { error: res.statusText || 'Server error (' + res.status + ')' };
+        }
+        if (res.ok && data.success) {
             if (typeof showToast === 'function') showToast(data.message || 'Trade placed', 'success');
             if (typeof fetchAll === 'function') fetchAll();
         } else {
-            const msg = data.error || data.message || 'Execute failed';
+            const msg = data.error || data.message || (res.status === 400 ? 'Bad request (check mode & pair)' : 'Execute failed');
             if (typeof showToast === 'function') showToast(msg, 'error');
             else if (typeof alert === 'function') alert(msg);
+            if (buttonEl) {
+                buttonEl.textContent = 'Failed';
+                buttonEl.style.color = 'var(--red, #f55)';
+                setTimeout(function () {
+                    buttonEl.textContent = origText || 'Execute (paper)';
+                    buttonEl.style.color = '';
+                }, 3000);
+            }
         }
     } catch (e) {
         const msg = 'Request failed: ' + (e.message || String(e));
         if (typeof showToast === 'function') showToast(msg, 'error');
         else if (typeof alert === 'function') alert(msg);
+        if (buttonEl) buttonEl.textContent = 'Error';
     } finally {
-        if (buttonEl) {
-            buttonEl.disabled = false;
+        if (buttonEl) buttonEl.disabled = false;
+        if (buttonEl && buttonEl.textContent !== 'Failed' && buttonEl.textContent !== 'Error') {
             buttonEl.textContent = origText || 'Execute (paper)';
         }
     }
