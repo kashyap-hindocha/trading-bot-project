@@ -185,7 +185,7 @@ function connectChartSocket() {
     chartSocket.disconnect();
     chartSocket = null;
   }
-  chartSocket = io(baseUrl, { path: '/socket.io', transports: ['websocket', 'polling'] });
+  chartSocket = io(baseUrl, { path: '/socket.io', transports: ['websocket', 'polling'], reconnection: false, reconnectionAttempts: 0 });
   let connectErrorLogged = false;
   chartSocket.on('connect', () => {
     chartLiveConnected = true;

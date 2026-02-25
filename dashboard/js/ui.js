@@ -200,13 +200,55 @@ function renderLogs(logs) {
   `).join('');
 }
 
-// ── Pair Management ──
-// REMOVED: renderPairs() - coinGrid element no longer exists
-// This function is stubbed out to prevent errors
+// ── Pair selection grid (enable/disable pairs) ──
 function renderPairs() {
-  // No-op: Coin grid section was removed from UI
-  // Keeping function to avoid breaking other code that calls it
-  return;
+  const grid = document.getElementById('pairSelectionGrid');
+  if (!grid || typeof pairConfigs === 'undefined' || Object.keys(pairConfigs).length === 0) {
+    if (grid) grid.innerHTML = '<div style="color: var(--gray-2); font-size: 12px; padding: 8px;">No pairs loaded</div>';
+    return;
+  }
+  const filter = (document.getElementById('pairFilterInput') || {}).value || '';
+  const filterLower = filter.toLowerCase().trim();
+  const pairs = Object.keys(pairConfigs).sort();
+  const filtered = filterLower ? pairs.filter(p => p.toLowerCase().includes(filterLower)) : pairs;
+
+  grid.innerHTML = filtered.map(pair => {
+    const cfg = pairConfigs[pair];
+    const enabled = cfg && cfg.enabled === 1;
+    const label = pair.replace('B-', '').replace('_USDT', '');
+    return `
+      <div class="pair-selection-item" data-pair="${pair}" style="display: flex; align-items: center; gap: 6px; padding: 4px 8px; background: var(--gray-3); border: 1px solid ${enabled ? 'var(--accent)' : 'var(--gray-2)'}; border-radius: 4px;">
+        <span style="font-size: 11px; color: var(--text); min-width: 72px;">${label}</span>
+        <button type="button" class="coin-toggle ${enabled ? 'on' : ''}" style="width: 36px; height: 18px; border-radius: 9px; border: 1px solid var(--gray-2); background: ${enabled ? 'var(--accent)' : 'var(--gray-2)'}; cursor: pointer; flex-shrink: 0;" title="${enabled ? 'ON (click to disable)' : 'OFF (click to enable)'}" aria-label="Toggle ${label}"></button>
+      </div>
+    `;
+  }).join('');
+
+  grid.querySelectorAll('.pair-selection-item').forEach(row => {
+    const pair = row.getAttribute('data-pair');
+    const toggle = row.querySelector('.coin-toggle');
+    if (toggle) {
+      toggle.addEventListener('click', () => {
+        togglePair(pair);
+        const cfg = pairConfigs[pair];
+        const on = cfg && cfg.enabled === 1;
+        toggle.classList.toggle('on', on);
+        toggle.style.background = on ? 'var(--accent)' : 'var(--gray-2)';
+        row.style.borderColor = on ? 'var(--accent)' : 'var(--gray-2)';
+      });
+    }
+  });
+}
+
+function onPairFilterInput() {
+  if (typeof renderPairs === 'function') renderPairs();
+}
+
+function onDisableAllPairs() {
+  if (typeof pairConfigs === 'undefined') return;
+  Object.keys(pairConfigs).forEach(p => { pairConfigs[p].enabled = 0; });
+  renderPairs();
+  if (typeof updatePairSelect === 'function') updatePairSelect();
 }
 
 // Wrapper for pagination changes
@@ -279,20 +321,18 @@ function onPairChange() {
 
 function togglePair(pair) {
   const cfg = pairConfigs[pair];
+  if (!cfg) return;
   cfg.enabled = cfg.enabled === 1 ? 0 : 1;
 
   const card = document.querySelector(`[data-pair="${pair}"]`);
-  const toggle = card.querySelector('.coin-toggle');
-
-  if (cfg.enabled) {
-    card.classList.add('enabled');
-    toggle.classList.add('on');
-  } else {
-    card.classList.remove('enabled');
-    toggle.classList.remove('on');
+  const toggle = card && card.querySelector('.coin-toggle');
+  if (card) card.classList.toggle('enabled', cfg.enabled === 1);
+  if (toggle) {
+    toggle.classList.toggle('on', cfg.enabled === 1);
+    toggle.style.background = cfg.enabled ? 'var(--accent)' : 'var(--gray-2)';
+    if (card.style) card.style.borderColor = cfg.enabled ? 'var(--accent)' : 'var(--gray-2)';
   }
-
-  updatePairSelect();
+  if (typeof updatePairSelect === 'function') updatePairSelect();
 }
 
 function toggleFavorite(pair) {
