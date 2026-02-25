@@ -1357,6 +1357,55 @@ def pair_signals():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/current_confidence")
+def current_confidence():
+    """Return current (live) strategy confidence % for each enabled pair. Runs strategy on latest 5m candles."""
+    try:
+        enabled_pairs = db.get_enabled_pairs()
+        if not enabled_pairs:
+            return jsonify({"pairs": [], "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")})
+
+        active_strategy_key = db.get_active_strategy()
+        strat_instance = _get_strategy_instance(active_strategy_key)
+        if not strat_instance and STRATEGY_MANAGER_LOADED:
+            strat_instance = strategy_manager.strategy_manager.get_active_strategy()
+        if not strat_instance:
+            return jsonify({"pairs": [], "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")})
+
+        client = _get_coindcx_client()
+        results = []
+        for cfg in enabled_pairs:
+            pair = cfg.get("pair")
+            if not pair:
+                continue
+            try:
+                candles = client.get_candles(pair, "5m", limit=200)
+                if not candles or len(candles) < 50:
+                    results.append({"pair": pair, "current_confidence": None})
+                    continue
+                candles_norm = [
+                    {"open": c.get("open", c.get("o")), "high": c.get("high", c.get("h")), "low": c.get("low", c.get("l")),
+                     "close": c.get("close", c.get("c")), "volume": c.get("volume", c.get("v", 0)), "time": c.get("time", c.get("t"))}
+                    for c in candles
+                ]
+                ev = strat_instance.evaluate(candles_norm, return_confidence=True)
+                if isinstance(ev, dict):
+                    confidence = float(ev.get("confidence", 0))
+                else:
+                    confidence = 0.0
+                results.append({"pair": pair, "current_confidence": round(confidence, 1)})
+            except Exception as e:
+                app.logger.debug(f"Current confidence for {pair}: {e}")
+                results.append({"pair": pair, "current_confidence": None})
+        return jsonify({
+            "pairs": results,
+            "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        })
+    except Exception as e:
+        app.logger.error(f"Error fetching current confidence: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 # Allowed path for bot log (no user-controlled paths)
 BOT_LOG_PATH = "/home/ubuntu/trading-bot/data/bot.log"
 

@@ -14,6 +14,7 @@ document.addEventListener('DOMContentLoaded', async function () {
 
   // Load pair signals (enabled pairs + last run status from bot)
   await loadPairSignals();
+  if (typeof loadCurrentConfidence === 'function') loadCurrentConfidence();
 
   // NOW populate pair selectors — pairSignals is ready
   populatePairSelectors();

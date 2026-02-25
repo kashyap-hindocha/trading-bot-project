@@ -83,7 +83,7 @@ async function loadPairSignals() {
 
         // Render the horizontal pair cards
         renderPairList();
-        
+
         // Update favorites panel with latest signal data
         if (typeof renderFavorites === 'function') {
             renderFavorites();
@@ -100,6 +100,24 @@ async function loadPairSignals() {
         // Refresh every 5s so confidence and execution status stay current
         setTimeout(loadPairSignals, 5000);
     }
+}
+
+// Fetch current (live) confidence for all enabled pairs and re-render cards
+async function loadCurrentConfidence() {
+    try {
+        const res = await fetch(`${API}/api/current_confidence`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const list = data.pairs || [];
+        currentConfidenceByPair = {};
+        list.forEach(function (item) {
+            if (item.pair != null && item.current_confidence != null) currentConfidenceByPair[item.pair] = item.current_confidence;
+        });
+        renderPairList();
+    } catch (err) {
+        console.debug('Current confidence fetch failed:', err);
+    }
+    setTimeout(loadCurrentConfidence, 30000);
 }
 
 // Next 5m candle close countdown (UTC; trades run at close)
@@ -196,31 +214,29 @@ function renderPairList() {
     container.innerHTML = '';
 
     pairsToShow.forEach((p, idx) => {
-        const hasError = !!(p.last_error && String(p.last_error).trim());
         const card = document.createElement('div');
         card.style.cssText = `
       padding: 12px 16px;
-      background: ${hasError ? 'rgba(255, 80, 80, 0.12)' : 'var(--gray-3)'};
-      border: 1px solid ${hasError ? 'rgba(255, 80, 80, 0.5)' : 'var(--gray-2)'};
+      background: var(--gray-3);
+      border: 1px solid var(--gray-2);
       border-radius: 6px;
-      min-width: 120px;
+      min-width: 140px;
       cursor: pointer;
       transition: all 0.2s;
     `;
 
         const baseCoin = p.pair.replace('B-', '').replace('_USDT', '');
-        const confPct = p.last_confidence != null ? Number(p.last_confidence) : (p.signal_strength || 0);
-        const signalPct = Math.min(100, Math.max(0, confPct));
-        const lastSignal = (p.last_signal || '').toString().trim();
-        const lastLine = lastSignal ? `<div style="font-size: 10px; color: var(--gray-2); margin-top: 4px;">Last: ${lastSignal}</div>` : '';
-        const errText = (p.last_error || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
-        const errorIcon = hasError ? `<span class="pair-error-icon" title="${errText}" style="cursor: help; margin-left: 4px; color: rgba(255,80,80,0.9); font-size: 12px;">ⓘ</span>` : '';
-        const titleLine = `<div style="font-size: 13px; font-weight: 700; color: var(--accent); margin-bottom: 6px;">${baseCoin}${errorIcon}</div>`;
+        const lastPct = p.last_confidence != null ? Number(p.last_confidence) : (p.signal_strength != null ? Number(p.signal_strength) : null);
+        const lastStr = lastPct != null ? lastPct.toFixed(1) : '—';
+        const currentPct = (currentConfidenceByPair && currentConfidenceByPair[p.pair] != null) ? Number(currentConfidenceByPair[p.pair]) : null;
+        const currentStr = currentPct != null ? currentPct.toFixed(1) : '—';
+        const titleLine = `<div style="font-size: 13px; font-weight: 700; color: var(--accent); margin-bottom: 8px;">${baseCoin}</div>`;
         card.innerHTML = titleLine + `
-      <div style="font-size: 11px; color: var(--gray-1); margin-bottom: 4px;" title="Last run from bot">Confidence: ${signalPct.toFixed(1)}%</div>
+      <div style="font-size: 11px; color: var(--gray-1); margin-bottom: 2px;">Last cycle: ${lastStr}%</div>
+      <div style="font-size: 11px; color: var(--gray-1); margin-bottom: 6px;">Current: ${currentStr}%</div>
       <div style="height: 4px; background: var(--gray-2); border-radius: 2px; overflow: hidden;">
-        <div style="height: 100%; width: ${signalPct}%; background: var(--accent); transition: width 0.3s;"></div>
-      </div>${lastLine}
+        <div style="height: 100%; width: ${Math.min(100, Math.max(0, currentPct != null ? currentPct : (lastPct != null ? lastPct : 0))}%; background: var(--accent); transition: width 0.3s;"></div>
+      </div>
       <button type="button" class="pair-execute-btn" style="margin-top: 8px; padding: 4px 8px; font-size: 10px; background: var(--accent); color: var(--gray-3); border: none; border-radius: 4px; cursor: pointer; width: 100%;">Execute (paper)</button>
     `;
 
@@ -234,11 +250,11 @@ function renderPairList() {
         }
 
         card.onmouseenter = () => {
-            card.style.borderColor = hasError ? 'rgba(255, 80, 80, 0.8)' : 'var(--accent)';
+            card.style.borderColor = 'var(--accent)';
             card.style.transform = 'translateY(-2px)';
         };
         card.onmouseleave = () => {
-            card.style.borderColor = hasError ? 'rgba(255, 80, 80, 0.5)' : 'var(--gray-2)';
+            card.style.borderColor = 'var(--gray-2)';
             card.style.transform = 'translateY(0)';
         };
 
@@ -275,36 +291,35 @@ function renderPairList() {
         while (container.firstChild) container.removeChild(container.firstChild);
 
         pairSignals.forEach((p, idx) => {
-            const hasError = !!(p.last_error && String(p.last_error).trim());
             const card = document.createElement('div');
             card.style.cssText = `
               padding: 12px 16px;
-              background: ${hasError ? 'rgba(255, 80, 80, 0.12)' : 'var(--gray-3)'};
-              border: 1px solid ${hasError ? 'rgba(255, 80, 80, 0.5)' : 'var(--gray-2)'};
+              background: var(--gray-3);
+              border: 1px solid var(--gray-2);
               border-radius: 6px;
-              min-width: 120px;
+              min-width: 140px;
               cursor: pointer;
               transition: all 0.2s;
             `;
             const baseCoin = p.pair.replace('B-', '').replace('_USDT', '');
-            const confPct = p.last_confidence != null ? Number(p.last_confidence) : (p.signal_strength || 0);
-            const signalPct = Math.min(100, Math.max(0, confPct));
-            const lastSignal = (p.last_signal || '').toString().trim();
-            const lastLine = lastSignal ? `<div style="font-size: 10px; color: var(--gray-2); margin-top: 4px;">Last: ${lastSignal}</div>` : '';
-            const errText = (p.last_error || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
-            const errorIcon = hasError ? `<span title="${errText}" style="cursor: help; margin-left: 4px; color: rgba(255,80,80,0.9); font-size: 12px;">ⓘ</span>` : '';
+            const lastPct = p.last_confidence != null ? Number(p.last_confidence) : (p.signal_strength != null ? Number(p.signal_strength) : null);
+            const lastStr = lastPct != null ? lastPct.toFixed(1) : '—';
+            const currentPct = (currentConfidenceByPair && currentConfidenceByPair[p.pair] != null) ? Number(currentConfidenceByPair[p.pair]) : null;
+            const currentStr = currentPct != null ? currentPct.toFixed(1) : '—';
+            const barPct = Math.min(100, Math.max(0, currentPct != null ? currentPct : (lastPct != null ? lastPct : 0)));
             card.innerHTML = `
-              <div style="font-size: 13px; font-weight: 700; color: var(--accent); margin-bottom: 6px;">${baseCoin}${errorIcon}</div>
-              <div style="font-size: 11px; color: var(--gray-1); margin-bottom: 4px;" title="Last run from bot">Confidence: ${signalPct.toFixed(1)}%</div>
+              <div style="font-size: 13px; font-weight: 700; color: var(--accent); margin-bottom: 8px;">${baseCoin}</div>
+              <div style="font-size: 11px; color: var(--gray-1); margin-bottom: 2px;">Last cycle: ${lastStr}%</div>
+              <div style="font-size: 11px; color: var(--gray-1); margin-bottom: 6px;">Current: ${currentStr}%</div>
               <div style="height: 4px; background: var(--gray-2); border-radius: 2px; overflow: hidden;">
-                <div style="height: 100%; width: ${signalPct}%; background: var(--accent); transition: width 0.3s;"></div>
-              </div>${lastLine}
+                <div style="height: 100%; width: ${barPct}%; background: var(--accent); transition: width 0.3s;"></div>
+              </div>
               <button type="button" class="pair-execute-btn" style="margin-top: 8px; padding: 4px 8px; font-size: 10px; background: var(--accent); color: var(--gray-3); border: none; border-radius: 4px; cursor: pointer; width: 100%;">Execute (paper)</button>
             `;
             const execBtnExp = card.querySelector('button.pair-execute-btn');
             if (execBtnExp) execBtnExp.addEventListener('click', function (ev) { ev.stopPropagation(); ev.preventDefault(); executeTradeForPair(p.pair, execBtnExp); });
-            card.onmouseenter = () => { card.style.borderColor = hasError ? 'rgba(255, 80, 80, 0.8)' : 'var(--accent)'; card.style.transform = 'translateY(-2px)'; };
-            card.onmouseleave = () => { card.style.borderColor = hasError ? 'rgba(255, 80, 80, 0.5)' : 'var(--gray-2)'; card.style.transform = 'translateY(0)'; };
+            card.onmouseenter = () => { card.style.borderColor = 'var(--accent)'; card.style.transform = 'translateY(-2px)'; };
+            card.onmouseleave = () => { card.style.borderColor = 'var(--gray-2)'; card.style.transform = 'translateY(0)'; };
             container.appendChild(card);
         });
 

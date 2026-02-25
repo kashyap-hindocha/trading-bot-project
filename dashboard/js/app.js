@@ -25,6 +25,7 @@ let pairMode = 'MULTI';
 let selectedSinglePair = null;
 let pairSignals = [];  // Pairs with signal strength
 let pairSignalsUpdatedAt = null;  // ISO timestamp when pair_signals was last fetched
+let currentConfidenceByPair = {};  // Live confidence % per pair from /api/current_confidence
 
 
 // Toast notification
