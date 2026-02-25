@@ -19,7 +19,7 @@ os.chdir(bot_path)
 from coindcx import CoinDCXREST
 
 # Strategy keys (must match server)
-STRATEGY_ORDER = ["enhanced_v2", "bollinger_rsi", "breakout_vol"]
+STRATEGY_ORDER = ["double_ema_pullback"]
 
 
 def get_strategy_instance(key):

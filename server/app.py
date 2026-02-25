@@ -531,7 +531,7 @@ def strategies():
                 active = db.get_active_strategy()
                 confidence_threshold = db.get_confidence_threshold()
             except Exception:
-                active, confidence_threshold = "enhanced_v2", 80.0
+                active, confidence_threshold = "double_ema_pullback", 80.0
             return jsonify({
                 "strategies": [],
                 "active": active,
@@ -623,7 +623,7 @@ def _seed_pair_config_if_empty():
 
 
 def _get_strategy_instance(strategy_key):
-    """Return a strategy instance by key (e.g. enhanced_v2). Used by manual execute."""
+    """Return a strategy instance by key (e.g. double_ema_pullback). Used by manual execute."""
     if not STRATEGY_MANAGER_LOADED or not strategy_key:
         return None
     try:

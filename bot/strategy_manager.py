@@ -116,7 +116,7 @@ class StrategyManager:
         return self.active_strategy_name
 
     def get_strategy_instance(self, strategy_key: str) -> Optional[TradingStrategy]:
-        """Get a strategy instance by key (e.g. enhanced_v2, bollinger_rsi, breakout_vol). Used for per-pair execution when pair was enabled by that strategy."""
+        """Get a strategy instance by key (e.g. double_ema_pullback). Used for per-pair execution."""
         if not strategy_key or strategy_key not in self.strategies:
             return None
         try:

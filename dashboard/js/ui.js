@@ -22,14 +22,14 @@ async function loadStrategies() {
     const data = await response.json();
 
     const strategies = (data.strategies && Array.isArray(data.strategies)) ? data.strategies : [];
-    const active = data.active || 'enhanced_v2';
+    const active = data.active || 'double_ema_pullback';
     const options = [];
     strategies.forEach(function (s) {
       const name = s.name || '';
       const label = (s.displayName || s.display_name || s.name || name).trim() || name;
       if (name) options.push('<option value="' + name + '">' + label + '</option>');
     });
-    select.innerHTML = options.length ? options.join('') : '<option value="enhanced_v2">Enhanced v2</option><option value="bollinger_rsi">Bollinger RSI</option><option value="breakout_vol">Breakout Vol</option>';
+    select.innerHTML = options.length ? options.join('') : '<option value="double_ema_pullback">Double EMA Pullback</option>';
     select.value = active;
     select.disabled = false;
 
@@ -38,8 +38,8 @@ async function loadStrategies() {
       thresholdInput.value = Math.min(100, Math.max(0, threshold));
     }
   } catch (error) {
-    select.innerHTML = '<option value="enhanced_v2">Enhanced v2</option>';
-    select.value = 'enhanced_v2';
+    select.innerHTML = '<option value="double_ema_pullback">Double EMA Pullback</option>';
+    select.value = 'double_ema_pullback';
     select.disabled = false;
     if (thresholdInput) thresholdInput.value = 80;
     console.error('Strategy load failed:', error);

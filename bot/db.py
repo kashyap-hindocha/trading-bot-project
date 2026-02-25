@@ -37,7 +37,7 @@ def init_db():
             position_id   TEXT,
             opened_at     TEXT,
             closed_at     TEXT,
-            strategy_name TEXT DEFAULT 'enhanced_v2', -- Strategy used for this trade
+            strategy_name TEXT DEFAULT 'double_ema_pullback', -- Strategy used for this trade
             strategy_note TEXT,
             confidence    REAL DEFAULT 0.0,    -- strategy confidence % (0-100)
             atr           REAL DEFAULT 0.0,    -- Average True Range at entry
@@ -110,7 +110,7 @@ def init_db():
     if "trailing_stop" not in trade_cols:
         c.execute("ALTER TABLE trades ADD COLUMN trailing_stop REAL DEFAULT 0.0")
     if "strategy_name" not in trade_cols:
-        c.execute("ALTER TABLE trades ADD COLUMN strategy_name TEXT DEFAULT 'enhanced_v2'")
+        c.execute("ALTER TABLE trades ADD COLUMN strategy_name TEXT DEFAULT 'double_ema_pullback'")
     
     # Add new strategy metric columns to paper_trades table (for DBs created before these columns existed)
     paper_cols = {row[1] for row in c.execute("PRAGMA table_info(paper_trades)").fetchall()}
@@ -123,7 +123,7 @@ def init_db():
     if "trailing_stop" not in paper_cols:
         c.execute("ALTER TABLE paper_trades ADD COLUMN trailing_stop REAL DEFAULT 0.0")
     if "strategy_name" not in paper_cols:
-        c.execute("ALTER TABLE paper_trades ADD COLUMN strategy_name TEXT DEFAULT 'enhanced_v2'")
+        c.execute("ALTER TABLE paper_trades ADD COLUMN strategy_name TEXT DEFAULT 'double_ema_pullback'")
 
     c.execute("""
         CREATE TABLE IF NOT EXISTS trading_mode (
@@ -159,7 +159,7 @@ def init_db():
             position_id   TEXT,
             opened_at     TEXT,
             closed_at     TEXT,
-            strategy_name TEXT DEFAULT 'enhanced_v2', -- Strategy used for this trade
+            strategy_name TEXT DEFAULT 'double_ema_pullback', -- Strategy used for this trade
             strategy_note TEXT,
             confidence    REAL DEFAULT 0.0,    -- strategy confidence % (0-100)
             atr           REAL DEFAULT 0.0,    -- Average True Range at entry
@@ -181,7 +181,7 @@ def init_db():
             id                   INTEGER PRIMARY KEY CHECK (id = 1),
             pair_mode            TEXT DEFAULT 'MULTI',
             selected_pair        TEXT,
-            active_strategy      TEXT DEFAULT 'enhanced_v2',   -- User-chosen strategy
+            active_strategy      TEXT DEFAULT 'double_ema_pullback',   -- User-chosen strategy
             confidence_threshold REAL DEFAULT 80.0,            -- Min confidence % to execute (user-set)
             updated_at           TEXT DEFAULT (datetime('now'))
         )
@@ -189,15 +189,15 @@ def init_db():
     # Add new columns if missing (migration for existing DBs)
     bc_cols = {row[1] for row in c.execute("PRAGMA table_info(bot_config)").fetchall()}
     if "active_strategy" not in bc_cols:
-        c.execute("ALTER TABLE bot_config ADD COLUMN active_strategy TEXT DEFAULT 'enhanced_v2'")
-        c.execute("UPDATE bot_config SET active_strategy='enhanced_v2' WHERE active_strategy IS NULL")
+        c.execute("ALTER TABLE bot_config ADD COLUMN active_strategy TEXT DEFAULT 'double_ema_pullback'")
+        c.execute("UPDATE bot_config SET active_strategy='double_ema_pullback' WHERE active_strategy IS NULL")
     if "confidence_threshold" not in bc_cols:
         c.execute("ALTER TABLE bot_config ADD COLUMN confidence_threshold REAL DEFAULT 80.0")
         c.execute("UPDATE bot_config SET confidence_threshold=80.0 WHERE confidence_threshold IS NULL")
 
     c.execute("""
         INSERT OR IGNORE INTO bot_config (id, pair_mode, active_strategy, confidence_threshold)
-        VALUES (1, 'MULTI', 'enhanced_v2', 80.0)
+        VALUES (1, 'MULTI', 'double_ema_pullback', 80.0)
     """)
 
     conn.commit()
@@ -206,7 +206,7 @@ def init_db():
 
 # ── Trades ───────────────────────────────────
 def insert_trade(pair, side, entry_price, quantity, leverage, tp_price, sl_price,
-                 order_id="", position_id="", strategy_name="enhanced_v2", strategy_note="", confidence=0.0,
+                 order_id="", position_id="", strategy_name="double_ema_pullback", strategy_note="", confidence=0.0,
                  atr=0.0, position_size=0.0, trailing_stop=0.0):
     conn = get_conn()
     conn.execute("""
@@ -468,7 +468,7 @@ def init_paper_wallet_if_missing(balance: float):
 
 # ── Paper trades ────────────────────────────
 def insert_paper_trade(pair, side, entry_price, quantity, leverage, tp_price, sl_price,
-                       fee_paid=0.0, order_id="", position_id="", strategy_name="enhanced_v2", strategy_note="", confidence=0.0,
+                       fee_paid=0.0, order_id="", position_id="", strategy_name="double_ema_pullback", strategy_note="", confidence=0.0,
                        atr=0.0, position_size=0.0, trailing_stop=0.0):
     conn = get_conn()
     conn.execute("""
@@ -593,7 +593,7 @@ def get_active_strategy() -> str:
     conn = get_conn()
     row = conn.execute("SELECT active_strategy FROM bot_config WHERE id=1").fetchone()
     conn.close()
-    return (row["active_strategy"] or "enhanced_v2") if row else "enhanced_v2"
+    return (row["active_strategy"] or "double_ema_pullback") if row else "double_ema_pullback"
 
 
 def set_active_strategy(strategy_key: str):
@@ -601,7 +601,7 @@ def set_active_strategy(strategy_key: str):
     conn.execute("""
         INSERT INTO bot_config (id, active_strategy, updated_at) VALUES (1, ?, datetime('now'))
         ON CONFLICT(id) DO UPDATE SET active_strategy=excluded.active_strategy, updated_at=datetime('now')
-    """, (strategy_key or "enhanced_v2",))
+    """, (strategy_key or "double_ema_pullback",))
     conn.commit()
     conn.close()
 
