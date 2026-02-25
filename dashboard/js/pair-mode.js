@@ -235,7 +235,7 @@ function renderPairList() {
       <div style="font-size: 11px; color: var(--gray-1); margin-bottom: 2px;">Last cycle: ${lastStr}%</div>
       <div style="font-size: 11px; color: var(--gray-1); margin-bottom: 6px;">Current: ${currentStr}%</div>
       <div style="height: 4px; background: var(--gray-2); border-radius: 2px; overflow: hidden;">
-        <div style="height: 100%; width: ${Math.min(100, Math.max(0, currentPct != null ? currentPct : (lastPct != null ? lastPct : 0))}%; background: var(--accent); transition: width 0.3s;"></div>
+        <div style="height: 100%; width: ${Math.min(100, Math.max(0, currentPct != null ? currentPct : (lastPct != null ? lastPct : 0)))}%; background: var(--accent); transition: width 0.3s;"></div>
       </div>
       <button type="button" class="pair-execute-btn" style="margin-top: 8px; padding: 4px 8px; font-size: 10px; background: var(--accent); color: var(--gray-3); border: none; border-radius: 4px; cursor: pointer; width: 100%;">Execute (paper)</button>
     `;
