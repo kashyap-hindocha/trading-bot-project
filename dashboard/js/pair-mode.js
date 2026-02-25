@@ -203,14 +203,16 @@ function renderPairList() {
         const atConf = p.enabled_at_confidence != null ? Number(p.enabled_at_confidence).toFixed(1) : null;
         const strategyDisplay = byStrategy ? byStrategy.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : '';
         const enabledByLine = (byStrategy && atConf) ? `<div style="font-size: 10px; color: var(--gray-2); margin-top: 6px;">Enabled by ${strategyDisplay} when confidence was ${atConf}%</div>` : '';
+        const bestKey = p.best_strategy;
+        const bestLine = bestKey ? `<div style="font-size: 10px; color: var(--gray-2); margin-top: 2px;">Best now: ${bestKey.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</div>` : '';
         const errText = (p.last_error || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
         const errorIcon = hasError ? `<span class="pair-error-icon" title="${errText}" style="cursor: help; margin-left: 4px; color: rgba(255,80,80,0.9); font-size: 12px;">ⓘ</span>` : '';
         const titleLine = `<div style="font-size: 13px; font-weight: 700; color: var(--accent); margin-bottom: 6px;">${baseCoin}${errorIcon}</div>`;
         card.innerHTML = titleLine + `
-      <div style="font-size: 11px; color: var(--gray-1); margin-bottom: 4px;" title="From bot's last run at 5m candle close">Confidence: ${signalPct}%</div>
+      <div style="font-size: 11px; color: var(--gray-1); margin-bottom: 4px;" title="Live: best of 3 strategies (refreshes every 5s)">Confidence: ${signalPct}%</div>
       <div style="height: 4px; background: var(--gray-2); border-radius: 2px; overflow: hidden;">
         <div style="height: 100%; width: ${signalPct}%; background: var(--accent); transition: width 0.3s;"></div>
-      </div>${enabledByLine}
+      </div>${bestLine}${enabledByLine}
       <button type="button" class="pair-execute-btn" style="margin-top: 8px; padding: 4px 8px; font-size: 10px; background: var(--accent); color: var(--gray-3); border: none; border-radius: 4px; cursor: pointer; width: 100%;">Execute (paper)</button>
     `;
 
@@ -282,14 +284,16 @@ function renderPairList() {
             const atConf = p.enabled_at_confidence != null ? Number(p.enabled_at_confidence).toFixed(1) : null;
             const strategyDisplay = byStrategy ? byStrategy.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : '';
             const enabledByLine = (byStrategy && atConf) ? `<div style="font-size: 10px; color: var(--gray-2); margin-top: 6px;">Enabled by ${strategyDisplay} when confidence was ${atConf}%</div>` : '';
+            const bestKey = p.best_strategy;
+            const bestLine = bestKey ? `<div style="font-size: 10px; color: var(--gray-2); margin-top: 2px;">Best now: ${bestKey.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</div>` : '';
             const errText = (p.last_error || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
             const errorIcon = hasError ? `<span title="${errText}" style="cursor: help; margin-left: 4px; color: rgba(255,80,80,0.9); font-size: 12px;">ⓘ</span>` : '';
             card.innerHTML = `
               <div style="font-size: 13px; font-weight: 700; color: var(--accent); margin-bottom: 6px;">${baseCoin}${errorIcon}</div>
-              <div style="font-size: 11px; color: var(--gray-1); margin-bottom: 4px;" title="From bot's last run at 5m candle close">Confidence: ${signalPct.toFixed(1)}%</div>
+              <div style="font-size: 11px; color: var(--gray-1); margin-bottom: 4px;" title="Live: best of 3 strategies (refreshes every 5s)">Confidence: ${signalPct.toFixed(1)}%</div>
               <div style="height: 4px; background: var(--gray-2); border-radius: 2px; overflow: hidden;">
                 <div style="height: 100%; width: ${signalPct}%; background: var(--accent); transition: width 0.3s;"></div>
-              </div>${enabledByLine}
+              </div>${bestLine}${enabledByLine}
               <button type="button" class="pair-execute-btn" style="margin-top: 8px; padding: 4px 8px; font-size: 10px; background: var(--accent); color: var(--gray-3); border: none; border-radius: 4px; cursor: pointer; width: 100%;">Execute (paper)</button>
             `;
             const execBtnExp = card.querySelector('button.pair-execute-btn');

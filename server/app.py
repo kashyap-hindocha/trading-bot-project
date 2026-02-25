@@ -758,6 +758,33 @@ def _get_strategy_instance(strategy_key):
     return None
 
 
+# Strategy keys used for "best of 3" confidence in pair_signals (must match batch order)
+PAIR_SIGNALS_STRATEGY_ORDER = ["enhanced_v2", "bollinger_rsi", "breakout_vol"]
+
+
+def _compute_best_confidence_all_strategies(candles_norm):
+    """
+    Run all 3 strategies on the same candles and return (best_confidence, best_strategy_key).
+    Used so the Trading Pairs UI shows the highest confidence among strategies and updates with live data.
+    """
+    best_confidence = 0.0
+    best_strategy_key = None
+    for key in PAIR_SIGNALS_STRATEGY_ORDER:
+        strat = _get_strategy_instance(key)
+        if not strat:
+            continue
+        try:
+            ev = strat.evaluate(candles_norm, return_confidence=True)
+            if ev and isinstance(ev, dict):
+                c = float(ev.get("confidence", 0))
+                if c > best_confidence:
+                    best_confidence = c
+                    best_strategy_key = key
+        except Exception:
+            continue
+    return (round(best_confidence, 1), best_strategy_key)
+
+
 def _batch_compute_readiness_with_strategy(pairs, client, interval, strategy_instance, strategy_key):
     """
     Compute confidence (readiness) for exactly one batch of up to 5 pairs using the given strategy.
@@ -1815,39 +1842,30 @@ def pair_mode():
 
 @app.route("/api/pair_signals")
 def pair_signals():
-    """Get signal strength for enabled pairs only (up to 10 max)."""
+    """Get live signal strength for enabled pairs: run all 3 strategies per pair, show highest confidence (refreshes every poll)."""
     try:
-        # Get ONLY enabled pair configs (user's favorites)
         enabled_pairs = db.get_enabled_pairs()
-        
         if not enabled_pairs:
             app.logger.info("No enabled pairs found. Pairs are auto-enabled when confidence > 75%.")
             return jsonify({
                 "pairs": [],
                 "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             })
-        
+
         client = CoinDCXREST("", "")
         results = []
         pairs_to_process = enabled_pairs[:10]
-        app.logger.info(f"Processing {len(pairs_to_process)} enabled pairs (confidence from enabling strategy)")
+        app.logger.info(f"Processing {len(pairs_to_process)} enabled pairs (live candles, best of 3 strategies)")
 
         for idx, pair_config in enumerate(pairs_to_process, 1):
             pair = pair_config.get("pair")
             if not pair:
                 continue
             enabled_by_strategy = pair_config.get("enabled_by_strategy")
-            # Use the strategy that enabled this pair for confidence; fallback to active strategy for interval
-            strat_instance = _get_strategy_instance(enabled_by_strategy) if enabled_by_strategy else None
-            if not strat_instance and STRATEGY_MANAGER_LOADED:
-                strat_instance = strategy_manager.strategy_manager.get_active_strategy()
-            interval = "5m"
-            if strat_instance:
-                interval = strat_instance.get_config().get("interval", "5m")
 
             try:
                 app.logger.debug(f"[{idx}/{len(pairs_to_process)}] Fetching candles for {pair}")
-                candles = client.get_candles(pair, interval, limit=200)
+                candles = client.get_candles(pair, "5m", limit=200)
                 if not candles or len(candles) < 50:
                     out = {
                         "pair": pair,
@@ -1858,48 +1876,46 @@ def pair_signals():
                         "inr_amount": pair_config.get("inr_amount", 300.0),
                         "enabled_by_strategy": enabled_by_strategy,
                         "enabled_at_confidence": pair_config.get("enabled_at_confidence"),
+                        "best_strategy": None,
                     }
                     try:
                         exec_status = db.get_pair_execution_status_all().get(pair, {})
                         out["last_closed_at"] = exec_status.get("last_closed_at")
                         out["last_error"] = exec_status.get("last_error")
-                        if exec_status.get("last_confidence") is not None:
-                            out["signal_strength"] = round(float(exec_status["last_confidence"]), 1)
                     except Exception:
                         pass
                     results.append(out)
                     continue
 
-                candles_norm = [{"open": c.get("open"), "high": c.get("high"), "low": c.get("low"), "close": c.get("close"), "volume": c.get("volume", 0), "time": c.get("time")} for c in candles]
-                if strat_instance:
-                    ev = strat_instance.evaluate(candles_norm, return_confidence=True)
-                    confidence = float(ev.get("confidence", 0)) if isinstance(ev, dict) else 0.0
-                else:
-                    confidence = float(pair_config.get("enabled_at_confidence") or 0)
+                candles_norm = [
+                    {"open": c.get("open"), "high": c.get("high"), "low": c.get("low"),
+                     "close": c.get("close"), "volume": c.get("volume", 0), "time": c.get("time")}
+                    for c in candles
+                ]
+                # Run all 3 strategies and use highest confidence so display updates with live data
+                best_confidence, best_strategy_key = _compute_best_confidence_all_strategies(candles_norm)
 
                 out = {
                     "pair": pair,
-                    "signal_strength": round(confidence, 1),
+                    "signal_strength": best_confidence,
                     "enabled": pair_config.get("enabled", 0),
                     "leverage": pair_config.get("leverage", 5),
                     "quantity": pair_config.get("quantity", 0.001),
                     "inr_amount": pair_config.get("inr_amount", 300.0),
                     "enabled_by_strategy": enabled_by_strategy,
                     "enabled_at_confidence": pair_config.get("enabled_at_confidence"),
-                    "last_price": candles[-1].get("close") if candles else None
+                    "best_strategy": best_strategy_key,
+                    "last_price": candles[-1].get("close") if candles else None,
                 }
                 try:
                     exec_status = db.get_pair_execution_status_all().get(pair, {})
                     out["last_closed_at"] = exec_status.get("last_closed_at")
                     out["last_error"] = exec_status.get("last_error")
                     out["last_signal"] = exec_status.get("last_signal")
-                    # Prefer bot's last-run confidence so UI matches why trade did/didn't run
-                    if exec_status.get("last_confidence") is not None:
-                        out["signal_strength"] = round(float(exec_status["last_confidence"]), 1)
                 except Exception:
                     pass
                 results.append(out)
-                app.logger.debug(f"[{idx}/{len(pairs_to_process)}] {pair}: confidence={out['signal_strength']:.1f}% ({enabled_by_strategy or 'active'})")
+                app.logger.debug(f"[{idx}/{len(pairs_to_process)}] {pair}: live best={best_confidence:.1f}% ({best_strategy_key})")
             except Exception as e:
                 app.logger.warning(f"Confidence calculation failed for {pair}: {e}")
                 out = {
@@ -1911,22 +1927,19 @@ def pair_signals():
                     "inr_amount": pair_config.get("inr_amount", 300.0),
                     "enabled_by_strategy": enabled_by_strategy,
                     "enabled_at_confidence": pair_config.get("enabled_at_confidence"),
+                    "best_strategy": None,
                 }
                 try:
                     exec_status = db.get_pair_execution_status_all().get(pair, {})
                     out["last_closed_at"] = exec_status.get("last_closed_at")
                     out["last_error"] = exec_status.get("last_error")
-                    if exec_status.get("last_confidence") is not None:
-                        out["signal_strength"] = round(float(exec_status["last_confidence"]), 1)
                 except Exception:
                     pass
                 results.append(out)
 
-        # Sort by current confidence (signal_strength) highest first
         results.sort(key=lambda x: x["signal_strength"], reverse=True)
-        
-        app.logger.info(f"Pair signals ready: {len(results)} pairs, top signal: {results[0]['signal_strength']:.1f}% ({results[0]['pair']})" if results else "No pairs processed")
-        
+        app.logger.info(f"Pair signals ready: {len(results)} pairs, top: {results[0]['signal_strength']:.1f}% ({results[0]['pair']})" if results else "No pairs processed")
+
         return jsonify({
             "pairs": results,
             "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
