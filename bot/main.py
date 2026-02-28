@@ -22,13 +22,16 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import db
 import strategy_manager
+import runtime_config
 from coindcx import CoinDCXREST, CoinDCXSocket
 
-load_dotenv("/home/ubuntu/trading-bot/.env")
+load_dotenv(runtime_config.env_file())
 
 # ── Logging ──────────────────────────────────
 # Keep only last 2 days of log files (trade histories stay in DB)
 from logging.handlers import TimedRotatingFileHandler
+
+os.makedirs(runtime_config.data_dir(), exist_ok=True)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -36,7 +39,7 @@ logging.basicConfig(
     handlers=[
         logging.StreamHandler(),
         TimedRotatingFileHandler(
-            "/home/ubuntu/trading-bot/data/bot.log",
+            runtime_config.bot_log_path(),
             when="midnight",
             interval=1,
             backupCount=2,  # current + 2 days = ~2 days retention
@@ -223,6 +226,93 @@ def _resolve_trade_sizing(current_price: float, pair_config: dict | None, strate
         logger.warning("INR sizing unavailable, falling back to fixed quantity")
 
     return base_quantity, leverage, inr_amount, None
+
+
+def _safe_float(v, default=0.0) -> float:
+    try:
+        return float(v)
+    except Exception:
+        return default
+
+
+def _pick_most_recent_position(positions: list[dict]) -> dict | None:
+    """Pick most recent position row from a list, using any available timestamp fields."""
+    if not positions:
+        return None
+
+    def _ts(p: dict) -> float:
+        for k in ("activation_time", "created_at", "updated_at", "timestamp"):
+            raw = p.get(k)
+            if raw is None or raw == "":
+                continue
+            try:
+                val = float(raw)
+                return val / 1000.0 if val > 1e10 else val
+            except Exception:
+                continue
+        return 0.0
+
+    return max(positions, key=_ts)
+
+
+def _await_position_id(order_id: str, timeout_sec: float) -> str:
+    """Poll positions until we can identify the opened position id for this PAIR/order."""
+    deadline = time.monotonic() + max(0.5, timeout_sec)
+    while time.monotonic() < deadline:
+        try:
+            positions = rest.get_positions() or []
+            open_for_pair = [p for p in positions if p.get("pair") == PAIR and p.get("status") == "open"]
+
+            if order_id:
+                for p in open_for_pair:
+                    for k in ("order_id", "orderId", "entry_order_id", "entryOrderId"):
+                        if str(p.get(k) or "") == str(order_id):
+                            return str(p.get("id") or "")
+
+            if len(open_for_pair) == 1:
+                return str(open_for_pair[0].get("id") or "")
+
+            picked = _pick_most_recent_position(open_for_pair)
+            if picked and picked.get("id"):
+                return str(picked.get("id"))
+        except Exception as e:
+            logger.debug(f"Position poll failed: {e}")
+        time.sleep(0.5)
+    return ""
+
+
+def _place_entry_order(pair: str, side: str, quantity: float, leverage: int, current_price: float) -> tuple[dict, str]:
+    """
+    Place entry order according to BOT_ENTRY_ORDER_MODE.
+    Returns (order_response, label).
+    """
+    mode = runtime_config.entry_order_mode()
+    if mode == "MARKET":
+        order = _retry_api(lambda: rest.place_order(pair, side, "market_order", quantity, leverage=leverage))
+        return order, "market"
+    if mode == "LIMIT_THEN_MARKET":
+        limit_price = round(float(current_price), 4)
+        order = _retry_api(lambda: rest.place_order(pair, side, "limit_order", quantity, price=limit_price, leverage=leverage))
+        return order, f"limit@{limit_price}"
+    limit_price = round(float(current_price), 4)
+    order = _retry_api(lambda: rest.place_order(pair, side, "limit_order", quantity, price=limit_price, leverage=leverage))
+    return order, f"limit@{limit_price}"
+
+
+def _get_latest_price_for_exit() -> float:
+    """Best-effort price for reconciliation exit. Prefer last buffered close, else REST 1m close."""
+    try:
+        if candle_buffer and candle_buffer[-1].get("close"):
+            return float(candle_buffer[-1]["close"])
+    except Exception:
+        pass
+    try:
+        candles = rest.get_candles(PAIR, "1m", limit=1)
+        if candles:
+            return float(candles[-1].get("close", candles[-1].get("c", 0)) or 0)
+    except Exception:
+        pass
+    return 0.0
 
 
 def _check_paper_positions(candle: dict):
@@ -418,10 +508,7 @@ def _run_strategy(current_price: float):
                     pass
             return
 
-        side       = "buy" if signal == "LONG" else "sell"
-        # Limit order at current price: avoid paying more (buy) or receiving less (sell) than current price.
-        order_type = "limit_order"
-        limit_price = round(float(current_price), 4)
+        side = "buy" if signal == "LONG" else "sell"
 
         # Get pair-specific config from database; use same strategy that enabled this pair for TP/SL and config
         pair_config = _get_pair_config()
@@ -437,50 +524,58 @@ def _run_strategy(current_price: float):
         else:
             logger.info(f"Using config for {PAIR}: leverage={leverage}x, quantity={quantity} | Position: {signal}")
 
-        # Place entry order as limit at current price (with retry on transient API failures)
-        order = _retry_api(lambda: rest.place_order(PAIR, side, order_type, quantity, price=limit_price, leverage=leverage))
+        # Place entry according to entry mode (LIMIT / MARKET / LIMIT_THEN_MARKET)
+        entry_mode = runtime_config.entry_order_mode()
+        order, order_mode_label = _place_entry_order(PAIR, side, quantity, leverage, current_price)
         if not order or order.get("error"):
             logger.error(f"Order placement failed after retries: {order}")
             db.log_event("ERROR", f"Order placement failed for {PAIR}: {order}")
+            try:
+                db.upsert_pair_execution_status(PAIR, last_error=f"Order placement failed: {order}")
+            except Exception:
+                pass
             return
-        order_id = order.get("id", "")
-        logger.info(f"Entry order placed: {order_id} | {signal} limit @ {limit_price}")
 
-        # Try to get position ID from order response first
-        position_id = order.get("position_id", "")
-        
-        # If not in order response, poll positions with retry logic
+        order_id = str(order.get("id", "") or "")
+        position_id = str(order.get("position_id", "") or "")
         if not position_id:
-            max_retries = 5
-            retry_count = 0
-            
-            while retry_count < max_retries and not position_id:
-                time.sleep(0.5)  # Wait for position to register
-                
+            timeout = runtime_config.entry_limit_ttl_sec() if entry_mode == "LIMIT_THEN_MARKET" else 5.0
+            position_id = _await_position_id(order_id, timeout_sec=timeout)
+
+        # LIMIT_THEN_MARKET: if we still don't see a position, cancel limit and place market
+        if entry_mode == "LIMIT_THEN_MARKET" and not position_id:
+            try:
+                if order_id:
+                    rest.cancel_order(order_id)
+                    logger.warning(f"Limit entry not filled within TTL; cancelled order {order_id}, switching to market entry")
+            except Exception as e:
+                logger.warning(f"Cancel limit order failed ({order_id}): {e}")
+
+            order2 = _retry_api(lambda: rest.place_order(PAIR, side, "market_order", quantity, leverage=leverage))
+            if not order2 or order2.get("error"):
+                logger.error(f"Market fallback placement failed: {order2}")
+                db.log_event("ERROR", f"Market fallback failed for {PAIR}: {order2}")
                 try:
-                    positions = rest.get_positions()
-                    for p in positions:
-                        if p.get("pair") == PAIR and p.get("status") == "open":
-                            # Additional check: match order_id if available
-                            if order_id and p.get("order_id") == order_id:
-                                position_id = p.get("id", "")
-                                break
-                            # Fallback: just match pair (less safe but works)
-                            elif not position_id:
-                                position_id = p.get("id", "")
-                    
-                    if position_id:
-                        logger.info(f"Position ID found: {position_id} (retry {retry_count + 1})")
-                        break
-                        
-                except Exception as e:
-                    logger.warning(f"Error fetching positions (retry {retry_count + 1}): {e}")
-                
-                retry_count += 1
-            
+                    db.upsert_pair_execution_status(PAIR, last_error=f"Market fallback failed: {order2}")
+                except Exception:
+                    pass
+                return
+            order_id = str(order2.get("id", "") or order_id)
+            position_id = str(order2.get("position_id", "") or "")
             if not position_id:
-                logger.error(f"Failed to get position ID after {max_retries} retries")
-                db.log_event("ERROR", f"Failed to get position ID for order {order_id}")
+                position_id = _await_position_id(order_id, timeout_sec=5.0)
+            order_mode_label = "market(fallback)"
+
+        if not position_id:
+            logger.error(f"Failed to identify position id for order {order_id}; skipping TP/SL and DB insert")
+            db.log_event("ERROR", f"Failed to identify position id for {PAIR} order {order_id}")
+            try:
+                db.upsert_pair_execution_status(PAIR, last_error=f"No position_id for order {order_id}")
+            except Exception:
+                pass
+            return
+
+        logger.info(f"Entry order placed: {order_id} | {signal} {order_mode_label} | position_id={position_id}")
 
         # Calculate TP/SL using the strategy that enabled this pair (same as evaluate)
         strategy_for_pair = _get_strategy_for_pair()
@@ -639,12 +734,126 @@ def _equity_snapshot_loop():
                 if balance is not None:
                     db.snapshot_paper_equity(balance)
             else:
-                wallet  = rest.get_wallet()
-                balance = float(wallet.get("balance", 0))
+                wallet = rest.get_wallet()
+                balance = 0.0
+                # CoinDCX futures wallet API returns a list of wallet objects
+                if isinstance(wallet, list):
+                    # Prefer INR (platform margin), else USDT
+                    pref = None
+                    for w in wallet:
+                        if not isinstance(w, dict):
+                            continue
+                        curr = str(w.get("currency_short_name") or w.get("currency") or "").upper()
+                        if curr == "INR":
+                            pref = w
+                            break
+                        if curr == "USDT" and pref is None:
+                            pref = w
+                    w = pref or (wallet[0] if wallet else None)
+                    if isinstance(w, dict):
+                        balance = _safe_float(
+                            w.get("available_balance")
+                            or w.get("wallet_balance")
+                            or w.get("total_balance")
+                            or w.get("balance"),
+                            0.0,
+                        )
+                elif isinstance(wallet, dict):
+                    balance = _safe_float(wallet.get("balance") or wallet.get("available_balance"), 0.0)
                 db.snapshot_equity(balance)
         except Exception as e:
             logger.warning(f"Equity snapshot failed: {e}")
         time.sleep(900)   # every 15 minutes
+
+
+# ─────────────────────────────────────────────
+#  Position reconciliation (REAL mode)
+# ─────────────────────────────────────────────
+def _normalize_side(raw) -> str:
+    s = str(raw or "").lower()
+    if s in ("buy", "long"):
+        return "buy"
+    if s in ("sell", "short"):
+        return "sell"
+    return "buy"
+
+
+def _position_reconcile_loop():
+    """
+    Keep DB trades consistent with exchange positions.
+    Fixes cases where WebSocket 'position_update' is missed and DB stays 'open' forever.
+    """
+    interval = runtime_config.position_reconcile_interval_sec()
+    while True:
+        try:
+            if _get_trading_mode() != "REAL":
+                time.sleep(interval)
+                continue
+
+            # If creds are missing, do not attempt reconciliation (avoid closing DB trades by accident)
+            if not API_KEY or not API_SECRET:
+                time.sleep(interval)
+                continue
+
+            db_open = [t for t in db.get_open_trades() if t.get("pair") == PAIR]
+            db_pos_ids = {str(t.get("position_id")) for t in db_open if t.get("position_id")}
+
+            positions = rest.get_positions() or []
+            ex_open = [p for p in positions if p.get("pair") == PAIR and p.get("status") == "open"]
+            ex_ids = {str(p.get("id")) for p in ex_open if p.get("id")}
+
+            # Close DB trades that no longer exist on exchange
+            for t in db_open:
+                pos_id = str(t.get("position_id") or "")
+                if not pos_id:
+                    continue
+                if pos_id in ex_ids:
+                    continue
+                exit_price = _get_latest_price_for_exit()
+                entry_price = _safe_float(t.get("entry_price"), 0.0)
+                quantity = _safe_float(t.get("quantity"), 0.0)
+                leverage = int(_safe_float(t.get("leverage"), 1))
+                side = _normalize_side(t.get("side"))
+                pnl = _calc_pnl(side, entry_price, exit_price, quantity, leverage) if exit_price else 0.0
+                db.close_trade(pos_id, exit_price, pnl)
+                logger.warning(f"Reconciler closed stale DB trade {PAIR} pos={pos_id} exit={exit_price} pnl={pnl:.4f}")
+                db.log_event("WARNING", f"Reconciler closed stale DB trade {PAIR} pos={pos_id} pnl={pnl:.4f}")
+
+            # Insert external open positions that are missing in DB (so caps/limits remain safe)
+            for p in ex_open:
+                pos_id = str(p.get("id") or "")
+                if not pos_id or pos_id in db_pos_ids:
+                    continue
+                active_pos = _safe_float(p.get("active_pos"), 0.0)
+                qty = abs(active_pos) if active_pos else abs(_safe_float(p.get("quantity"), 0.0))
+                if qty <= 0:
+                    continue
+                side = "buy" if active_pos > 0 else "sell" if active_pos < 0 else _normalize_side(p.get("side"))
+                entry_price = _safe_float(p.get("avg_price") or p.get("entry_price"), 0.0)
+                lev = int(_safe_float(p.get("leverage"), 1))
+                db.insert_trade(
+                    pair=PAIR,
+                    side=side,
+                    entry_price=entry_price,
+                    quantity=qty,
+                    leverage=lev,
+                    tp_price=None,
+                    sl_price=None,
+                    order_id="",
+                    position_id=pos_id,
+                    strategy_name="external",
+                    strategy_note="Inserted by reconciler (position existed on exchange)",
+                    confidence=0.0,
+                    atr=0.0,
+                    position_size=0.0,
+                    trailing_stop=0.0,
+                )
+                logger.warning(f"Reconciler inserted external position into DB {PAIR} pos={pos_id} side={side} qty={qty}")
+                db.log_event("WARNING", f"Reconciler inserted external position {PAIR} pos={pos_id}")
+
+        except Exception as e:
+            logger.warning(f"Position reconciliation failed: {e}")
+        time.sleep(interval)
 
 
 # ─────────────────────────────────────────────
@@ -701,7 +910,7 @@ def main():
     logger.info("=== Trading Bot Starting ===")
 
     # Init DB
-    os.makedirs("/home/ubuntu/trading-bot/data", exist_ok=True)
+    os.makedirs(runtime_config.data_dir(), exist_ok=True)
     db.init_db()
     try:
         db.cleanup_bot_log_older_than_days()
@@ -727,6 +936,11 @@ def main():
     timer_thread = threading.Thread(target=_run_on_5m_timer, daemon=True)
     timer_thread.start()
     logger.info("5m timer fallback started (runs strategy at each 5m close using REST)")
+
+    # Reconcile DB open trades vs exchange positions (REAL mode only)
+    reconcile_thread = threading.Thread(target=_position_reconcile_loop, daemon=True)
+    reconcile_thread.start()
+    logger.info(f"Position reconciler started (every {runtime_config.position_reconcile_interval_sec():.0f}s)")
 
     # Register socket callbacks
     socket.on("candlestick", on_candlestick)

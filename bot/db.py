@@ -4,10 +4,19 @@ SQLite database — stores all trades, positions, and bot events.
 
 import sqlite3
 import json
+import os
 from datetime import datetime
 from typing import Optional
 
-DB_PATH = "/home/ubuntu/trading-bot/data/bot.db"
+try:
+    from runtime_config import db_path as _db_path
+except Exception:
+    _db_path = None
+
+
+DB_PATH = _db_path() if _db_path else os.path.abspath(
+    os.getenv("BOT_DB_PATH", os.path.join(os.path.dirname(__file__), "..", "data", "bot.db"))
+)
 
 
 def get_conn():

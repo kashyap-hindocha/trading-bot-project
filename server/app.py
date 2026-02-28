@@ -15,6 +15,24 @@ from flask_cors import CORS
 from datetime import datetime, timezone, timedelta
 import db
 
+# runtime config (paths, etc) lives in bot/ and should be on sys.path above
+try:
+    import runtime_config
+except Exception:
+    runtime_config = None
+
+
+def _load_env():
+    """Load env vars from BOT_ENV_FILE (or default)."""
+    try:
+        from dotenv import load_dotenv
+        if runtime_config:
+            load_dotenv(runtime_config.env_file())
+        else:
+            load_dotenv()
+    except Exception:
+        pass
+
 # Try to import strategy_manager, fallback if fails
 try:
     import strategy_manager
@@ -283,8 +301,7 @@ def _get_real_balance():
     balance = 0.0
     balance_currency = "INR"
     try:
-        from dotenv import load_dotenv
-        load_dotenv("/home/ubuntu/trading-bot/.env")
+        _load_env()
         key = os.getenv("COINDCX_API_KEY")
         secret = os.getenv("COINDCX_API_SECRET")
 
@@ -595,8 +612,7 @@ def paper_reset():
 def _get_coindcx_client():
     """Get CoinDCX client (authenticated if available, else public)."""
     try:
-        from dotenv import load_dotenv
-        load_dotenv("/home/ubuntu/trading-bot/.env")
+        _load_env()
         key = os.getenv("COINDCX_API_KEY")
         secret = os.getenv("COINDCX_API_SECRET")
         if key and secret:
@@ -731,8 +747,7 @@ def handle_api_error(error):
 @app.route("/api/debug/wallet")
 def debug_wallet():
     try:
-        from dotenv import load_dotenv
-        load_dotenv("/home/ubuntu/trading-bot/.env")
+        _load_env()
         key = os.getenv("COINDCX_API_KEY")
         secret = os.getenv("COINDCX_API_SECRET")
         
@@ -1045,8 +1060,7 @@ def paper_close_trade():
 def pairs_available():
     """Get all available trading pairs from CoinDCX."""
     try:
-        from dotenv import load_dotenv
-        load_dotenv("/home/ubuntu/trading-bot/.env")
+        _load_env()
         key = os.getenv("COINDCX_API_KEY")
         secret = os.getenv("COINDCX_API_SECRET")
         
@@ -1179,8 +1193,7 @@ def pairs_prices():
         if not enabled_pairs:
             return jsonify({})
         
-        from dotenv import load_dotenv
-        load_dotenv("/home/ubuntu/trading-bot/.env")
+        _load_env()
         key = os.getenv("COINDCX_API_KEY")
         secret = os.getenv("COINDCX_API_SECRET")
         
@@ -1460,7 +1473,7 @@ def current_confidence():
 
 
 # Allowed path for bot log (no user-controlled paths)
-BOT_LOG_PATH = "/home/ubuntu/trading-bot/data/bot.log"
+BOT_LOG_PATH = runtime_config.bot_log_path() if runtime_config else "/home/ubuntu/trading-bot/data/bot.log"
 
 # Match Python logging asctime: "2026-02-24 16:55:32,123" or "2026-02-24 16:55:32"
 _BOT_LOG_TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})(?:[,.](\d+))?")
@@ -1548,9 +1561,7 @@ def live_positions():
         import time
         import json
         import requests
-        from dotenv import load_dotenv
-        
-        load_dotenv("/home/ubuntu/trading-bot/.env")
+        _load_env()
         key = os.getenv("COINDCX_API_KEY")
         secret = os.getenv("COINDCX_API_SECRET")
 
@@ -1696,8 +1707,7 @@ def live_positions():
 def debug_positions():
     """Debug endpoint - returns raw CoinDCX positions response to identify field names."""
     try:
-        from dotenv import load_dotenv
-        load_dotenv("/home/ubuntu/trading-bot/.env")
+        _load_env()
         key = os.getenv("COINDCX_API_KEY")
         secret = os.getenv("COINDCX_API_SECRET")
         if not key or not secret:
@@ -1727,8 +1737,7 @@ if __name__ == "__main__":
 
         def _relay_thread():
             import os
-            from dotenv import load_dotenv
-            load_dotenv("/home/ubuntu/trading-bot/.env")
+            _load_env()
             key = os.getenv("COINDCX_API_KEY") or os.getenv("API_KEY")
             secret = os.getenv("COINDCX_API_SECRET") or os.getenv("API_SECRET")
             if not key or not secret:

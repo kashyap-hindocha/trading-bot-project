@@ -4,11 +4,15 @@ After=network.target
 
 [Service]
 Type=simple
-User=ubuntu
-WorkingDirectory=/home/ubuntu/trading-bot
-Environment=PATH=/home/ubuntu/trading-bot/venv/bin
+User=kashyap
+WorkingDirectory=/home/kashyap/disk_storage/Oracle/trading-bot-project
+Environment=PATH=/home/kashyap/disk_storage/Oracle/trading-bot-project/venv/bin
+Environment=BOT_HOME=/home/kashyap/disk_storage/Oracle/trading-bot-project
+Environment=BOT_ENTRY_ORDER_MODE=LIMIT_THEN_MARKET
+Environment=BOT_ENTRY_LIMIT_TTL_SEC=5
+Environment=BOT_POSITION_RECONCILE_SEC=30
 # MUST run bot_manager.py (not main.py). The manager spawns one main.py <PAIR> per enabled pair.
-ExecStart=/home/ubuntu/trading-bot/venv/bin/python bot/bot_manager.py
+ExecStart=/home/kashyap/disk_storage/Oracle/trading-bot-project/venv/bin/python bot/bot_manager.py
 Restart=always
 RestartSec=10
 StandardOutput=journal

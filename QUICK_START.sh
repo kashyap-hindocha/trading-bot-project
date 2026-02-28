@@ -10,15 +10,8 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-# Check if running as ubuntu user
-if [ "$USER" != "ubuntu" ]; then
-    echo -e "${YELLOW}⚠️  This script should be run as 'ubuntu' user${NC}"
-    echo "Switching to ubuntu user..."
-    sudo -u ubuntu bash "$0" "$@"
-    exit $?
-fi
-
-cd /home/ubuntu/trading-bot
+BOT_HOME="${BOT_HOME:-$(cd "$(dirname "$0")" && pwd)}"
+cd "$BOT_HOME"
 
 # 1. Initialize database
 echo -e "${GREEN}✓${NC} Initializing database..."
@@ -51,8 +44,8 @@ echo ""
 echo -e "${GREEN}✅ Deployment complete!${NC}"
 echo ""
 echo "📊 Dashboard: http://$(curl -s ifconfig.me 2>/dev/null || echo 'YOUR_SERVER_IP')"
-echo "📝 Manager Logs: tail -f /home/ubuntu/trading-bot/data/bot_manager.log"
-echo "📝 Bot Logs: tail -f /home/ubuntu/trading-bot/data/bot.log"
+echo "📝 Manager Logs: tail -f $BOT_HOME/data/bot_manager.log"
+echo "📝 Bot Logs: tail -f $BOT_HOME/data/bot.log"
 echo ""
 echo "Next steps:"
 echo "  1. Open the dashboard"
