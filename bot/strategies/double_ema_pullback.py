@@ -88,7 +88,18 @@ class DoubleEMAPullback(TradingStrategy):
         elif sell_signal:
             signal = "SHORT"
 
-        confidence = 100.0 if signal else 0.0
+        # When no signal: expose a 0–100 "readiness" so dashboard shows meaningful % (proximity to EMAs)
+        if signal:
+            confidence = 100.0
+        else:
+            # Readiness: how far price is from EMA1 as % of EMA1, mapped to 0–99 (never 100 without signal)
+            if ema1_curr and ema1_curr > 0:
+                pct_from_ema1 = (close_curr - ema1_curr) / ema1_curr * 100  # e.g. +0.5% above, -0.3% below
+                # Map to 0–99: above EMA1 -> 50–99, below -> 0–50
+                readiness = 50.0 + max(-50, min(49, pct_from_ema1 * 25))  # scale so ~±2% = full range
+                confidence = max(0.0, min(99.0, readiness))
+            else:
+                confidence = 0.0
         if return_confidence:
             return {
                 "signal": signal,

@@ -2,7 +2,13 @@ import sys
 import os
 import re
 import json
-sys.path.insert(0, '/home/ubuntu/trading-bot/bot')
+
+# Prefer project-relative bot path so strategy loads when not on ubuntu
+_bot_path = os.path.join(os.path.dirname(__file__), '..', 'bot')
+if os.path.isdir(os.path.abspath(_bot_path)):
+    sys.path.insert(0, os.path.abspath(_bot_path))
+else:
+    sys.path.insert(0, '/home/ubuntu/trading-bot/bot')
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
@@ -634,6 +640,43 @@ def _get_strategy_instance(strategy_key):
     except Exception as e:
         app.logger.warning(f"Could not get strategy {strategy_key}: {e}")
     return None
+
+
+def _compute_confidence_for_enabled_pairs(enabled_pairs, max_pairs=20):
+    """Run active strategy on latest 5m candles for each enabled pair. Returns dict pair -> confidence (float or None)."""
+    out = {}
+    if not enabled_pairs:
+        return out
+    active_strategy_key = db.get_active_strategy()
+    strat = _get_strategy_instance(active_strategy_key)
+    if not strat and STRATEGY_MANAGER_LOADED:
+        strat = strategy_manager.strategy_manager.get_active_strategy()
+    if not strat:
+        return out
+    client = _get_coindcx_client()
+    for cfg in enabled_pairs[:max_pairs]:
+        pair = cfg.get("pair")
+        if not pair:
+            continue
+        try:
+            candles = client.get_candles(pair, "5m", limit=200)
+            if not candles or len(candles) < 50:
+                out[pair] = None
+                continue
+            candles_norm = [
+                {"open": c.get("open", c.get("o")), "high": c.get("high", c.get("h")), "low": c.get("low", c.get("l")),
+                 "close": c.get("close", c.get("c")), "volume": c.get("volume", c.get("v", 0)), "time": c.get("time", c.get("t"))}
+                for c in candles
+            ]
+            ev = strat.evaluate(candles_norm, return_confidence=True)
+            if isinstance(ev, dict):
+                out[pair] = round(float(ev.get("confidence", 0)), 1)
+            else:
+                out[pair] = 0.0
+        except Exception as e:
+            app.logger.debug(f"Current confidence for {pair}: {e}")
+            out[pair] = None
+    return out
 
 
 @app.route("/api/candles")
@@ -1326,26 +1369,36 @@ def pair_mode():
 
 @app.route("/api/pair_signals")
 def pair_signals():
-    """Return enabled pairs with last run status from bot (no server-side strategy run)."""
+    """Return enabled pairs with last run status from bot and server-computed current (and last fallback) confidence."""
     try:
         enabled_pairs = db.get_enabled_pairs()
         exec_status_all = db.get_pair_execution_status_all()
+        # Server-side confidence so dashboard shows actual % even when bot has not run
+        computed = _compute_confidence_for_enabled_pairs(enabled_pairs)
         results = []
         for cfg in enabled_pairs:
             pair = cfg.get("pair")
             if not pair:
                 continue
             st = exec_status_all.get(pair, {})
+            last_conf = st.get("last_confidence")
+            if last_conf is not None:
+                last_conf = float(last_conf)
+            current_conf = computed.get(pair)
+            # When bot has never run, use server-computed as fallback for "last cycle" so UI shows a value
+            if last_conf is None and current_conf is not None:
+                last_conf = current_conf
             results.append({
                 "pair": pair,
-                "signal_strength": float(st.get("last_confidence") or 0),
+                "signal_strength": float(last_conf if last_conf is not None else (current_conf if current_conf is not None else 0)),
                 "enabled": cfg.get("enabled", 1),
                 "leverage": cfg.get("leverage", 5),
                 "quantity": cfg.get("quantity", 0.001),
                 "inr_amount": cfg.get("inr_amount", 300.0),
                 "last_closed_at": st.get("last_closed_at"),
                 "last_signal": st.get("last_signal"),
-                "last_confidence": st.get("last_confidence"),
+                "last_confidence": last_conf,
+                "current_confidence": current_conf,
                 "last_error": st.get("last_error"),
             })
         return jsonify({

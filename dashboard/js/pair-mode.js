@@ -75,9 +75,17 @@ async function loadPairSignals() {
         }
 
         const data = await res.json();
-        // API returns { pairs, updated_at }; support legacy array format
+        // API returns { pairs, updated_at }; support legacy array format; pairs may include current_confidence
         pairSignals = Array.isArray(data) ? data : (data.pairs || []);
         pairSignalsUpdatedAt = data.updated_at || null;
+
+        // Use server-computed current_confidence from pair_signals so "Current %" updates every 5s
+        if (typeof currentConfidenceByPair !== 'undefined') {
+            currentConfidenceByPair = {};
+            pairSignals.forEach(function (p) {
+                if (p.pair != null && p.current_confidence != null) currentConfidenceByPair[p.pair] = p.current_confidence;
+            });
+        }
 
         populatePairModeSelector();
 

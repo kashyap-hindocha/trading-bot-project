@@ -514,7 +514,7 @@ async function closePaperTrade(positionId) {
   const btn = document.getElementById('closeTradeBtn');
   if (btn) { btn.disabled = true; btn.textContent = 'Closing…'; }
   try {
-    const res = await fetch('/api/paper/close_trade', {
+    const res = await fetch(API + '/api/paper/close_trade', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ position_id: positionId }),
