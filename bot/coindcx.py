@@ -105,7 +105,10 @@ class CoinDCXREST:
 		return {"error": "Max retries exceeded"}
 
 	def get_candles(self, pair, interval, limit=100):
-		"""Get candles with error handling."""
+		"""Get candles from public API. API returns newest-first (descending time);
+		we return chronological order (oldest first) so strategies and last_close are correct.
+		Note: Public feed may differ from futures trading UI prices; if so, a futures-specific
+		candles endpoint would be needed."""
 		try:
 			resp = requests.get(
 				f"{PUBLIC_BASE}/market_data/candles",
@@ -113,7 +116,11 @@ class CoinDCXREST:
 				timeout=10,
 			)
 			resp.raise_for_status()
-			return resp.json()
+			data = resp.json()
+			if isinstance(data, list) and len(data) > 1:
+				# API returns descending by time (newest first); reverse so oldest first
+				data = list(reversed(data))
+			return data
 		except Exception as e:
 			logger.error(f"Failed to get candles for {pair}: {e}")
 			return []

@@ -2,6 +2,11 @@
 
 This guide will help you set up automatic deployment to your Oracle server on every push to the main branch.
 
+## Local vs server
+
+- **Local (your machine):** You develop and push from here. Paths (DB, logs, `.env`) are resolved from the **project root** (parent of `bot/`), so you don’t need to set `BOT_HOME`. Running e.g. `python bot/bot_manager.py` from the repo root works as-is.
+- **Server (GitHub deploy):** The repo is cloned at `~/trading-bot` (e.g. `/home/ubuntu/trading-bot`). The `bot.service` and `server.service` in the repo are written for that path and user (`ubuntu`). After the first clone, copy them into the **user** systemd directory so `systemctl --user` can start/restart them (see Step 1 and “User systemd” below).
+
 ## Step 1: Set up Git on Oracle Server
 
 SSH into your Oracle server and run:
@@ -21,6 +26,19 @@ git fetch origin
 git reset --hard origin/main
 git branch --set-upstream-to=origin/main main
 ```
+
+**User systemd (bot + server):** So that `systemctl --user restart bot` / `server` work after deploy, install the unit files once on the server:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp ~/trading-bot/bot.service ~/.config/systemd/user/
+cp ~/trading-bot/server.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable bot.service server.service
+systemctl --user start bot.service server.service
+```
+
+The units expect the app at `~/trading-bot` and user `ubuntu`. If your server user or path differ, set `BOT_HOME` in the unit or edit `WorkingDirectory`/`ExecStart`.
 
 ## Step 2: Generate SSH Key on Your Local Machine (for GitHub Actions)
 
@@ -133,6 +151,43 @@ If needed, you can manually run the deployment script on the server:
 ```bash
 cd ~/trading-bot
 ./deploy.sh
+```
+
+## After each deployment: restart commands
+
+**These two commands are enough** (and `deploy.sh` already runs them):
+
+```bash
+systemctl --user restart server.service
+systemctl --user restart bot.service
+```
+
+If services are installed system-wide (under `/etc/systemd/system/`), use:
+
+```bash
+sudo systemctl restart server
+sudo systemctl restart bot
+```
+
+- **Server** runs the Flask API (dashboard, pair signals, logs).
+- **Bot** runs `bot_manager.py`, which starts **one** `main.py` process **per enabled pair** only. Do not run `main.py` directly; the manager handles which pairs are active.
+
+**Auto-restart:** Both `server.service` and `bot.service` use `Restart=always` and `RestartSec=5`/`10`, so they restart automatically if they crash. No extra commands are needed for that.
+
+### Bot fails with "No pair argument provided"
+
+This means `main.py` is being run **directly** (with no pair). The service must run **bot_manager.py**, not `main.py`. On the server, check:
+
+```bash
+# See what the bot service actually runs
+sudo systemctl cat bot.service | grep ExecStart
+```
+
+You must see `bot/bot_manager.py`. If you see `bot/main.py`, fix the unit file (copy `bot.service` from the repo so it uses `bot/bot_manager.py`), then:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart bot
 ```
 
 ## Optional: Deploy to Specific Branch

@@ -8,7 +8,7 @@
 
 ### Project Purpose
 
-The trading bot automates crypto futures trading on **CoinDCX** via its REST and WebSocket APIs. When the selected strategy matches trading conditions at **90% confidence** (configurable), it executes trades and sets **Take Profit (TP)** and **Stop Loss (SL)** based on the strategy.
+The trading bot automates crypto futures trading on **CoinDCX** via its REST and WebSocket APIs. When the selected strategy matches trading conditions at **75% confidence** (configurable via strategy `confidence_threshold`), it executes trades and sets **Take Profit (TP)** and **Stop Loss (SL)** based on the strategy.
 
 ### Key Features
 
@@ -16,14 +16,18 @@ The trading bot automates crypto futures trading on **CoinDCX** via its REST and
 |---------|-------------|
 | **Paper Mode** | Simulates trades internally; no real orders. Tracks entry/exit, TP/SL hits, P&L to validate strategy before going live. |
 | **Real Mode** | Executes live trades with real money using CoinDCX APIs. |
-| **Strategy-Based Execution** | Uses configurable strategies (e.g. EMA, MACD, RSI, volume). Executes only when confidence ≥ threshold (default 75%, UI shows 90% threshold). |
+| **Strategy-Based Execution** | Uses configurable strategies (e.g. EMA, MACD, RSI, volume). Executes only when confidence ≥ threshold (default 75%). Batch auto-enable/disable uses a separate **readiness** (proximity) metric at 75%—see docs/PROJECT_ANALYSIS.md. |
 | **TP/SL** | Calculated per strategy (percentage or ATR-based) and placed via API or simulated in paper mode. |
 | **Web Dashboard** | Visualizes open positions, live P&L, trade history; enables strategy switching, bot start/stop, pair management, signal readiness. |
+
+### Multi-Pair, Max 3 Open Trades
+
+The bot runs in **multi-pair mode only**: one `main.py` process per **enabled** pair (started by `bot_manager.py`). There is a **global cap of 3 open trades** at any time across all pairs; when one closes, the next signal on any enabled pair can open. Per-pair limits (e.g. 1 open per pair) come from the strategy config. Single-pair mode has been removed.
 
 ### High-Level Flow
 
 ```
-Seed candles → WebSocket candlesticks → Strategy evaluate → (if signal + auto_execute)
+Seed candles → WebSocket candlesticks (or 5m timer fallback) → Strategy evaluate → (if signal + auto_execute)
   → PAPER: insert paper trade
   → REAL:  place_order + place_tp_sl + insert trade
 ```
@@ -35,9 +39,9 @@ Seed candles → WebSocket candlesticks → Strategy evaluate → (if signal + a
 ```
 trading-bot-project/
 ├── bot/
-│   ├── main.py              # Single-pair bot entry (strategy_manager)
-│   ├── main_multi_pair.py   # Multi-pair bot (uses strategy.py)
-│   ├── bot_manager.py       # Spawns one main.py per enabled pair
+│   ├── main.py              # Per-pair bot entry (one process per enabled pair; max 3 open total)
+│   ├── main_multi_pair.py   # Legacy multi-pair entry (optional; primary is bot_manager + main.py)
+│   ├── bot_manager.py       # Spawns one main.py per enabled pair (multi-pair only)
 │   ├── coindcx.py           # CoinDCX REST & WebSocket wrapper
 │   ├── db.py                # SQLite persistence
 │   ├── strategy.py          # Standalone strategy (pair_signals, main_multi_pair)

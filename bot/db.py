@@ -4,9 +4,19 @@ SQLite database — stores all trades, positions, and bot events.
 
 import sqlite3
 import json
+import os
 from datetime import datetime
+from typing import Optional
 
-DB_PATH = "/home/ubuntu/trading-bot/data/bot.db"
+try:
+    from runtime_config import db_path as _db_path
+except Exception:
+    _db_path = None
+
+
+DB_PATH = _db_path() if _db_path else os.path.abspath(
+    os.getenv("BOT_DB_PATH", os.path.join(os.path.dirname(__file__), "..", "data", "bot.db"))
+)
 
 
 def get_conn():
@@ -36,7 +46,7 @@ def init_db():
             position_id   TEXT,
             opened_at     TEXT,
             closed_at     TEXT,
-            strategy_name TEXT DEFAULT 'enhanced_v2', -- Strategy used for this trade
+            strategy_name TEXT DEFAULT 'double_ema_pullback', -- Strategy used for this trade
             strategy_note TEXT,
             confidence    REAL DEFAULT 0.0,    -- strategy confidence % (0-100)
             atr           REAL DEFAULT 0.0,    -- Average True Range at entry
@@ -80,7 +90,26 @@ def init_db():
     if "inr_amount" not in cols:
         c.execute("ALTER TABLE pair_config ADD COLUMN inr_amount REAL DEFAULT 300.0")
         c.execute("UPDATE pair_config SET inr_amount=300.0 WHERE inr_amount IS NULL")
-    
+    if "auto_enabled" not in cols:
+        c.execute("ALTER TABLE pair_config ADD COLUMN auto_enabled INTEGER DEFAULT 0")
+        c.execute("UPDATE pair_config SET auto_enabled=0 WHERE auto_enabled IS NULL")
+    if "enabled_by_strategy" not in cols:
+        c.execute("ALTER TABLE pair_config ADD COLUMN enabled_by_strategy TEXT")
+    if "enabled_at_confidence" not in cols:
+        c.execute("ALTER TABLE pair_config ADD COLUMN enabled_at_confidence REAL")
+
+    # Per-pair execution status (last run: signal, confidence, error) for UI
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS pair_execution_status (
+            pair             TEXT PRIMARY KEY,
+            last_closed_at   TEXT,
+            last_signal      TEXT,
+            last_confidence  REAL,
+            last_error       TEXT,
+            updated_at       TEXT DEFAULT (datetime('now'))
+        )
+    """)
+
     # Add new strategy metric columns to trades table
     trade_cols = {row[1] for row in c.execute("PRAGMA table_info(trades)").fetchall()}
     if "atr" not in trade_cols:
@@ -90,10 +119,12 @@ def init_db():
     if "trailing_stop" not in trade_cols:
         c.execute("ALTER TABLE trades ADD COLUMN trailing_stop REAL DEFAULT 0.0")
     if "strategy_name" not in trade_cols:
-        c.execute("ALTER TABLE trades ADD COLUMN strategy_name TEXT DEFAULT 'enhanced_v2'")
+        c.execute("ALTER TABLE trades ADD COLUMN strategy_name TEXT DEFAULT 'double_ema_pullback'")
     
-    # Add new strategy metric columns to paper_trades table
+    # Add new strategy metric columns to paper_trades table (for DBs created before these columns existed)
     paper_cols = {row[1] for row in c.execute("PRAGMA table_info(paper_trades)").fetchall()}
+    if "confidence" not in paper_cols:
+        c.execute("ALTER TABLE paper_trades ADD COLUMN confidence REAL DEFAULT 0.0")
     if "atr" not in paper_cols:
         c.execute("ALTER TABLE paper_trades ADD COLUMN atr REAL DEFAULT 0.0")
     if "position_size" not in paper_cols:
@@ -101,7 +132,7 @@ def init_db():
     if "trailing_stop" not in paper_cols:
         c.execute("ALTER TABLE paper_trades ADD COLUMN trailing_stop REAL DEFAULT 0.0")
     if "strategy_name" not in paper_cols:
-        c.execute("ALTER TABLE paper_trades ADD COLUMN strategy_name TEXT DEFAULT 'enhanced_v2'")
+        c.execute("ALTER TABLE paper_trades ADD COLUMN strategy_name TEXT DEFAULT 'double_ema_pullback'")
 
     c.execute("""
         CREATE TABLE IF NOT EXISTS trading_mode (
@@ -137,7 +168,7 @@ def init_db():
             position_id   TEXT,
             opened_at     TEXT,
             closed_at     TEXT,
-            strategy_name TEXT DEFAULT 'enhanced_v2', -- Strategy used for this trade
+            strategy_name TEXT DEFAULT 'double_ema_pullback', -- Strategy used for this trade
             strategy_note TEXT,
             confidence    REAL DEFAULT 0.0,    -- strategy confidence % (0-100)
             atr           REAL DEFAULT 0.0,    -- Average True Range at entry
@@ -156,11 +187,26 @@ def init_db():
 
     c.execute("""
         CREATE TABLE IF NOT EXISTS bot_config (
-            id            INTEGER PRIMARY KEY CHECK (id = 1),
-            pair_mode     TEXT DEFAULT 'MULTI',  -- SINGLE / MULTI
-            selected_pair TEXT,                   -- Used when pair_mode=SINGLE
-            updated_at    TEXT DEFAULT (datetime('now'))
+            id                   INTEGER PRIMARY KEY CHECK (id = 1),
+            pair_mode            TEXT DEFAULT 'MULTI',
+            selected_pair        TEXT,
+            active_strategy      TEXT DEFAULT 'double_ema_pullback',   -- User-chosen strategy
+            confidence_threshold REAL DEFAULT 80.0,            -- Min confidence % to execute (user-set)
+            updated_at           TEXT DEFAULT (datetime('now'))
         )
+    """)
+    # Add new columns if missing (migration for existing DBs)
+    bc_cols = {row[1] for row in c.execute("PRAGMA table_info(bot_config)").fetchall()}
+    if "active_strategy" not in bc_cols:
+        c.execute("ALTER TABLE bot_config ADD COLUMN active_strategy TEXT DEFAULT 'double_ema_pullback'")
+        c.execute("UPDATE bot_config SET active_strategy='double_ema_pullback' WHERE active_strategy IS NULL")
+    if "confidence_threshold" not in bc_cols:
+        c.execute("ALTER TABLE bot_config ADD COLUMN confidence_threshold REAL DEFAULT 80.0")
+        c.execute("UPDATE bot_config SET confidence_threshold=80.0 WHERE confidence_threshold IS NULL")
+
+    c.execute("""
+        INSERT OR IGNORE INTO bot_config (id, pair_mode, active_strategy, confidence_threshold)
+        VALUES (1, 'MULTI', 'double_ema_pullback', 80.0)
     """)
 
     conn.commit()
@@ -169,7 +215,7 @@ def init_db():
 
 # ── Trades ───────────────────────────────────
 def insert_trade(pair, side, entry_price, quantity, leverage, tp_price, sl_price,
-                 order_id="", position_id="", strategy_name="enhanced_v2", strategy_note="", confidence=0.0,
+                 order_id="", position_id="", strategy_name="double_ema_pullback", strategy_note="", confidence=0.0,
                  atr=0.0, position_size=0.0, trailing_stop=0.0):
     conn = get_conn()
     conn.execute("""
@@ -200,6 +246,18 @@ def get_open_trades():
     rows = conn.execute("SELECT * FROM trades WHERE status='open'").fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def get_last_closed_trade_closed_at(pair: str, paper: bool = False) -> Optional[str]:
+    """Return closed_at (ISO str) of the most recent closed trade for this pair, or None. Used for re-entry cooldown."""
+    conn = get_conn()
+    table = "paper_trades" if paper else "trades"
+    row = conn.execute(
+        f"SELECT closed_at FROM {table} WHERE pair=? AND status='closed' ORDER BY closed_at DESC LIMIT 1",
+        (pair,),
+    ).fetchone()
+    conn.close()
+    return row["closed_at"] if row and row["closed_at"] else None
 
 
 def get_all_trades(limit=100):
@@ -256,9 +314,22 @@ def get_equity_history(limit=200):
 
 
 # ── Bot log ──────────────────────────────────
+BOT_LOG_RETENTION_DAYS = 2  # Keep only last 2 days (trade histories in trades/paper_trades are kept)
+
+
 def log_event(level: str, message: str):
     conn = get_conn()
     conn.execute("INSERT INTO bot_log (level, message) VALUES (?,?)", (level, message))
+    conn.commit()
+    conn.close()
+
+
+def cleanup_bot_log_older_than_days(days: int = None):
+    """Delete bot_log entries older than the given days (default BOT_LOG_RETENTION_DAYS). Trade histories are not touched."""
+    if days is None:
+        days = BOT_LOG_RETENTION_DAYS
+    conn = get_conn()
+    conn.execute("DELETE FROM bot_log WHERE created_at < datetime('now', ?)", (f"-{days} days",))
     conn.commit()
     conn.close()
 
@@ -326,6 +397,35 @@ def update_pair_enabled(pair: str, enabled: int):
     conn.close()
 
 
+def upsert_pair_execution_status(pair: str, last_closed_at: Optional[str] = None,
+                                  last_signal: Optional[str] = None, last_confidence: Optional[float] = None,
+                                  last_error: Optional[str] = None):
+    """Update execution status for a pair (bot calls on closed candle / skip / execute)."""
+    conn = get_conn()
+    conn.execute("""
+        INSERT INTO pair_execution_status (pair, last_closed_at, last_signal, last_confidence, last_error, updated_at)
+        VALUES (?, ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(pair) DO UPDATE SET
+            last_closed_at=COALESCE(excluded.last_closed_at, last_closed_at),
+            last_signal=COALESCE(excluded.last_signal, last_signal),
+            last_confidence=COALESCE(excluded.last_confidence, last_confidence),
+            last_error=excluded.last_error,
+            updated_at=datetime('now')
+    """, (pair, last_closed_at, last_signal, last_confidence, last_error))
+    conn.commit()
+    conn.close()
+
+
+def get_pair_execution_status_all():
+    """Get last_closed_at, last_error etc. for all pairs (for UI)."""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT pair, last_closed_at, last_signal, last_confidence, last_error, updated_at FROM pair_execution_status"
+    ).fetchall()
+    conn.close()
+    return {r["pair"]: dict(r) for r in rows}
+
+
 # ── Trading mode ────────────────────────────
 def get_trading_mode() -> str:
     conn = get_conn()
@@ -377,7 +477,7 @@ def init_paper_wallet_if_missing(balance: float):
 
 # ── Paper trades ────────────────────────────
 def insert_paper_trade(pair, side, entry_price, quantity, leverage, tp_price, sl_price,
-                       fee_paid=0.0, order_id="", position_id="", strategy_name="enhanced_v2", strategy_note="", confidence=0.0,
+                       fee_paid=0.0, order_id="", position_id="", strategy_name="double_ema_pullback", strategy_note="", confidence=0.0,
                        atr=0.0, position_size=0.0, trailing_stop=0.0):
     conn = get_conn()
     conn.execute("""
@@ -481,20 +581,55 @@ def get_pair_mode() -> dict:
 
 
 def set_pair_mode(mode: str, selected_pair: str = None):
-    """Set pair mode (SINGLE/MULTI) and optionally selected pair for SINGLE mode."""
+    """Set pair mode. Only MULTI is used: one bot process per enabled pair, max 3 open trades total."""
     mode = mode.upper()
-    if mode not in ("SINGLE", "MULTI"):
-        raise ValueError(f"Invalid pair_mode: {mode}. Must be SINGLE or MULTI.")
-    
+    if mode == "SINGLE":
+        mode = "MULTI"
     conn = get_conn()
     conn.execute("""
         INSERT INTO bot_config (id, pair_mode, selected_pair, updated_at)
-        VALUES (1, ?, ?, datetime('now'))
+        VALUES (1, ?, NULL, datetime('now'))
         ON CONFLICT(id) DO UPDATE SET
             pair_mode=excluded.pair_mode,
-            selected_pair=excluded.selected_pair,
+            selected_pair=NULL,
             updated_at=datetime('now')
-    """, (mode, selected_pair))
+    """, (mode,))
+    conn.commit()
+    conn.close()
+
+
+def get_active_strategy() -> str:
+    conn = get_conn()
+    row = conn.execute("SELECT active_strategy FROM bot_config WHERE id=1").fetchone()
+    conn.close()
+    return (row["active_strategy"] or "double_ema_pullback") if row else "double_ema_pullback"
+
+
+def set_active_strategy(strategy_key: str):
+    conn = get_conn()
+    conn.execute("""
+        INSERT INTO bot_config (id, active_strategy, updated_at) VALUES (1, ?, datetime('now'))
+        ON CONFLICT(id) DO UPDATE SET active_strategy=excluded.active_strategy, updated_at=datetime('now')
+    """, (strategy_key or "double_ema_pullback",))
+    conn.commit()
+    conn.close()
+
+
+def get_confidence_threshold() -> float:
+    conn = get_conn()
+    row = conn.execute("SELECT confidence_threshold FROM bot_config WHERE id=1").fetchone()
+    conn.close()
+    if row and row["confidence_threshold"] is not None:
+        return float(row["confidence_threshold"])
+    return 80.0
+
+
+def set_confidence_threshold(threshold: float):
+    conn = get_conn()
+    conn.execute("""
+        INSERT INTO bot_config (id, confidence_threshold, updated_at) VALUES (1, ?, datetime('now'))
+        ON CONFLICT(id) DO UPDATE SET confidence_threshold=excluded.confidence_threshold, updated_at=datetime('now')
+    """, (float(threshold),))
     conn.commit()
     conn.close()
 

@@ -10,63 +10,81 @@ function renderMode() {
   btn.disabled = false;
 }
 
-// ── Strategy Management ──
+// ── Strategy & confidence threshold (from bot_config) ──
 async function loadStrategies() {
   const select = document.getElementById('strategySelect');
+  const thresholdInput = document.getElementById('confidenceThresholdInput');
+  if (!select) return;
 
   try {
-    const response = await fetch('/api/strategies');
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-
+    const response = await fetch((typeof API !== 'undefined' ? API : '') + '/api/strategies');
+    if (!response.ok) throw new Error('HTTP ' + response.status);
     const data = await response.json();
 
-    if (data.strategies && Array.isArray(data.strategies) && data.strategies.length > 0) {
-      select.innerHTML = data.strategies.map(s =>
-        `<option value="${s.name}">${s.displayName || s.name}</option>`
-      ).join('');
-
-      if (data.active) {
-        select.value = data.active;
-      }
-    } else {
-      select.innerHTML = '<option value="">No strategies</option>';
-    }
+    const strategies = (data.strategies && Array.isArray(data.strategies)) ? data.strategies : [];
+    const active = data.active || 'double_ema_pullback';
+    const options = [];
+    strategies.forEach(function (s) {
+      const name = s.name || '';
+      const label = (s.displayName || s.display_name || s.name || name).trim() || name;
+      if (name) options.push('<option value="' + name + '">' + label + '</option>');
+    });
+    select.innerHTML = options.length ? options.join('') : '<option value="double_ema_pullback">Double EMA Pullback</option>';
+    select.value = active;
     select.disabled = false;
+
+    const threshold = data.confidence_threshold != null ? Number(data.confidence_threshold) : 80;
+    if (thresholdInput) {
+      thresholdInput.value = Math.min(100, Math.max(0, threshold));
+    }
   } catch (error) {
-    // Fallback: show status message
-    select.innerHTML = '<option value="">Strategies unavailable</option>';
-    select.disabled = true;
+    select.innerHTML = '<option value="double_ema_pullback">Double EMA Pullback</option>';
+    select.value = 'double_ema_pullback';
+    select.disabled = false;
+    if (thresholdInput) thresholdInput.value = 80;
     console.error('Strategy load failed:', error);
   }
 }
 
 async function changeStrategy() {
   const select = document.getElementById('strategySelect');
-  const strategyName = select.value;
-
+  const strategyName = select && select.value;
   if (!strategyName) return;
-
   try {
-    const response = await fetch('/api/strategies', {
+    const res = await fetch((typeof API !== 'undefined' ? API : '') + '/api/strategies', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ strategy: strategyName })
     });
-
-    if (response.ok) {
-      console.log(`Strategy changed to: ${strategyName}`);
-      // Optionally reload data to reflect new strategy
+    if (res.ok) {
+      console.log('Strategy set to:', strategyName);
       fetchAll();
-    } else {
-      console.error('Failed to change strategy');
-      // Reset to previous value
-      loadStrategies();
-    }
-  } catch (error) {
-    console.error('Error changing strategy:', error);
+    } else loadStrategies();
+  } catch (e) {
+    console.error('Change strategy:', e);
+    loadStrategies();
+  }
+}
+
+async function changeConfidenceThreshold() {
+  const input = document.getElementById('confidenceThresholdInput');
+  if (!input) return;
+  const v = parseFloat(input.value);
+  if (isNaN(v) || v < 0 || v > 100) {
+    loadStrategies();
+    return;
+  }
+  try {
+    const res = await fetch((typeof API !== 'undefined' ? API : '') + '/api/strategies', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confidence_threshold: v })
+    });
+    if (res.ok) {
+      console.log('Confidence threshold set to:', v + '%');
+    } else loadStrategies();
+  } catch (e) {
+    console.error('Change confidence threshold:', e);
     loadStrategies();
   }
 }
@@ -182,13 +200,55 @@ function renderLogs(logs) {
   `).join('');
 }
 
-// ── Pair Management ──
-// REMOVED: renderPairs() - coinGrid element no longer exists
-// This function is stubbed out to prevent errors
+// ── Pair selection grid (enable/disable pairs) ──
 function renderPairs() {
-  // No-op: Coin grid section was removed from UI
-  // Keeping function to avoid breaking other code that calls it
-  return;
+  const grid = document.getElementById('pairSelectionGrid');
+  if (!grid || typeof pairConfigs === 'undefined' || Object.keys(pairConfigs).length === 0) {
+    if (grid) grid.innerHTML = '<div style="color: var(--gray-2); font-size: 12px; padding: 8px;">No pairs loaded</div>';
+    return;
+  }
+  const filter = (document.getElementById('pairFilterInput') || {}).value || '';
+  const filterLower = filter.toLowerCase().trim();
+  const pairs = Object.keys(pairConfigs).sort();
+  const filtered = filterLower ? pairs.filter(p => p.toLowerCase().includes(filterLower)) : pairs;
+
+  grid.innerHTML = filtered.map(pair => {
+    const cfg = pairConfigs[pair];
+    const enabled = cfg && cfg.enabled === 1;
+    const label = pair.replace('B-', '').replace('_USDT', '');
+    return `
+      <div class="pair-selection-item" data-pair="${pair}" style="display: flex; align-items: center; gap: 6px; padding: 4px 8px; background: var(--gray-3); border: 1px solid ${enabled ? 'var(--accent)' : 'var(--gray-2)'}; border-radius: 4px;">
+        <span style="font-size: 11px; color: var(--text); min-width: 72px;">${label}</span>
+        <button type="button" class="coin-toggle ${enabled ? 'on' : ''}" style="width: 36px; height: 18px; border-radius: 9px; border: 1px solid var(--gray-2); background: ${enabled ? 'var(--accent)' : 'var(--gray-2)'}; cursor: pointer; flex-shrink: 0;" title="${enabled ? 'ON (click to disable)' : 'OFF (click to enable)'}" aria-label="Toggle ${label}"></button>
+      </div>
+    `;
+  }).join('');
+
+  grid.querySelectorAll('.pair-selection-item').forEach(row => {
+    const pair = row.getAttribute('data-pair');
+    const toggle = row.querySelector('.coin-toggle');
+    if (toggle) {
+      toggle.addEventListener('click', () => {
+        togglePair(pair);
+        const cfg = pairConfigs[pair];
+        const on = cfg && cfg.enabled === 1;
+        toggle.classList.toggle('on', on);
+        toggle.style.background = on ? 'var(--accent)' : 'var(--gray-2)';
+        row.style.borderColor = on ? 'var(--accent)' : 'var(--gray-2)';
+      });
+    }
+  });
+}
+
+function onPairFilterInput() {
+  if (typeof renderPairs === 'function') renderPairs();
+}
+
+function onDisableAllPairs() {
+  if (typeof pairConfigs === 'undefined') return;
+  Object.keys(pairConfigs).forEach(p => { pairConfigs[p].enabled = 0; });
+  renderPairs();
+  if (typeof updatePairSelect === 'function') updatePairSelect();
 }
 
 // Wrapper for pagination changes
@@ -201,36 +261,27 @@ function renderFavorites() {
   const panel = document.getElementById('favoritesPanel');
   if (!panel) return;
 
-  // Use enabled pairs from pair manager (pairConfigsDB)
-  let enabledPairs = [];
-  if (typeof pairConfigsDB !== 'undefined' && pairConfigsDB.length > 0) {
-    enabledPairs = pairConfigsDB.filter(c => c.enabled === 1);
-  }
+  // Use pair signals (enabled pairs from auto-enabled / pair_signals API)
+  const enabledPairs = (typeof pairSignals !== 'undefined' && Array.isArray(pairSignals))
+    ? pairSignals
+    : [];
 
   if (enabledPairs.length === 0) {
-    panel.innerHTML = '<div class="loading" style="padding: 10px 0; font-size: 11px;">Enable pairs in Pair Manager below</div>';
+    panel.innerHTML = '<div class="loading" style="padding: 10px 0; font-size: 11px;">No auto-enabled pairs yet</div>';
     return;
   }
 
   panel.innerHTML = enabledPairs.slice(0, 10).map(cfg => {
     const baseCoin = cfg.pair.replace('B-', '').replace('_USDT', '');
-    
-    // Get signal strength if available
-    let signalInfo = '';
-    if (typeof pairSignals !== 'undefined' && pairSignals.length > 0) {
-      const pairData = pairSignals.find(p => p.pair === cfg.pair);
-      if (pairData) {
-        const signalPct = Math.min(100, Math.max(0, pairData.signal_strength || 0));
-        signalInfo = `<div style="font-size: 9px; color: var(--gray-1); margin-top: 2px;">Signal: ${signalPct.toFixed(1)}%</div>`;
-      }
-    }
+    const signalPct = Math.min(100, Math.max(0, cfg.signal_strength || 0));
+    const signalInfo = `<div style="font-size: 9px; color: var(--gray-1); margin-top: 2px;">Signal: ${signalPct.toFixed(1)}%</div>`;
 
     return `
       <div class="fav-item" data-pair="${cfg.pair}" style="padding: 8px; background: var(--gray-3); border: 1px solid var(--gray-2); border-radius: 4px; margin-bottom: 4px;">
         <div style="display: flex; justify-content: space-between; align-items: center;">
           <div>
             <div style="font-weight: 700; color: var(--accent); font-size: 12px;">${baseCoin}</div>
-            <div style="font-size: 9px; color: var(--gray-1);">Lev: ${cfg.leverage}x | ₹${cfg.inr_amount}</div>
+            <div style="font-size: 9px; color: var(--gray-1);">Lev: ${cfg.leverage || 5}x | ₹${cfg.inr_amount || 300}</div>
             ${signalInfo}
           </div>
         </div>
@@ -270,20 +321,18 @@ function onPairChange() {
 
 function togglePair(pair) {
   const cfg = pairConfigs[pair];
+  if (!cfg) return;
   cfg.enabled = cfg.enabled === 1 ? 0 : 1;
 
   const card = document.querySelector(`[data-pair="${pair}"]`);
-  const toggle = card.querySelector('.coin-toggle');
-
-  if (cfg.enabled) {
-    card.classList.add('enabled');
-    toggle.classList.add('on');
-  } else {
-    card.classList.remove('enabled');
-    toggle.classList.remove('on');
+  const toggle = card && card.querySelector('.coin-toggle');
+  if (card) card.classList.toggle('enabled', cfg.enabled === 1);
+  if (toggle) {
+    toggle.classList.toggle('on', cfg.enabled === 1);
+    toggle.style.background = cfg.enabled ? 'var(--accent)' : 'var(--gray-2)';
+    if (card.style) card.style.borderColor = cfg.enabled ? 'var(--accent)' : 'var(--gray-2)';
   }
-
-  updatePairSelect();
+  if (typeof updatePairSelect === 'function') updatePairSelect();
 }
 
 function toggleFavorite(pair) {

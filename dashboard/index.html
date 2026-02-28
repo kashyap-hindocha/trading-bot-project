@@ -17,6 +17,9 @@
   <!-- Lightweight Charts (TradingView) -->
   <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
 
+  <!-- Socket.IO client for live chart -->
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+
   <!-- Stylesheets -->
   <link rel="stylesheet" href="css/variables.css">
   <link rel="stylesheet" href="css/styles.css">
@@ -39,6 +42,8 @@
       <select class="strategy-select" id="strategySelect" onchange="changeStrategy()" disabled>
         <option value="">Loading strategies...</option>
       </select>
+      <label style="font-size: 11px; color: var(--gray-2); margin-left: 8px;">Min conf %</label>
+      <input type="number" id="confidenceThresholdInput" min="0" max="100" step="1" value="80" style="width: 48px; padding: 4px 6px; background: var(--gray-3); color: var(--accent); border: 1px solid var(--gray-2); border-radius: 4px; font-family: Space Mono; font-size: 12px;" onchange="changeConfidenceThreshold()" title="Min confidence % to execute a trade">
       <button class="toggle-btn start" id="toggleBtn" onclick="toggleBot()" disabled>
         ⏳ Loading
       </button>
@@ -96,34 +101,38 @@
       </div>
     </div>
 
-    <!-- Pair Mode Control Section -->
-    <div class="pair-mode-section" style="margin: 20px 0;">
+    <!-- Pair selection: enable/disable which pairs the bot trades -->
+    <div class="chart-panel" style="margin-bottom: 16px;">
       <div class="panel-title">
-        ⚙️ Trading Mode
+        ⚙️ Pair selection
         <div class="panel-tools" style="font-size: 11px; color: var(--gray-2);">
-          Multi-pair trading is always enabled
+          Toggle ON to let the bot trade this pair (max 3 open at a time). <strong>Click Save changes</strong> to apply — otherwise Execute (paper) may return 400.
         </div>
       </div>
-      <div class="card" style="padding: 20px;">
-        <div style="display: flex; gap: 20px; align-items: center; flex-wrap: wrap;">
-          <!-- Fixed Mode Info -->
-          <div style="flex: 1; text-align: right;">
-            <div style="font-size: 11px; color: var(--gray-2); margin-bottom: 4px;">STATUS</div>
-            <div id="pairModeStatus" style="font-size: 14px; color: var(--accent); font-weight: 700;">
-              Trading ALL enabled pairs
-            </div>
-          </div>
-        </div>
+      <div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px;">
+        <input type="text" id="pairFilterInput" placeholder="Filter pairs..." style="padding: 6px 10px; width: 180px; background: var(--gray-3); color: var(--text); border: 1px solid var(--gray-2); border-radius: 4px; font-size: 12px;">
+        <button type="button" id="disableAllPairsBtn" style="padding: 6px 12px; font-size: 11px; background: var(--gray-3); color: var(--gray-1); border: 1px solid var(--gray-2); border-radius: 4px; cursor: pointer;">Disable all</button>
+        <button type="button" class="apply-btn" id="applyCoinsBtn" onclick="applyPairChanges()" disabled style="padding: 6px 14px; font-size: 12px; background: var(--accent); color: #000; border: none; border-radius: 4px; cursor: pointer; font-weight: 600;">Save changes</button>
+      </div>
+      <div id="pairSelectionGrid" style="display: flex; flex-wrap: wrap; gap: 8px; max-height: 200px; overflow-y: auto; padding: 4px;">
+        <div style="color: var(--gray-2); font-size: 12px; padding: 8px;">Loading pairs...</div>
       </div>
     </div>
 
-    <!-- Active Trading Pairs (Horizontal) -->
+    <!-- Active Trading Pairs (Horizontal) — only enabled pairs, last run from bot -->
     <div class="active-pairs-section">
       <div class="panel-title">
         📊 Trading Pairs
         <div class="panel-tools" style="font-size: 11px; color: var(--gray-2);">
-          Sorted by signal strength (top 10)
+          <span id="nextCloseCountdown" title="Time until next 5m candle close (trades run at close)">Next 5m close: —</span>
+          <span style="margin-left: 8px;">·</span>
+          <span id="pairSignalsLastUpdated" title="When status was last refreshed">—</span>
+          <span style="margin-left: 8px;">·</span>
+          <a href="#" id="showBotLogsLink" style="margin-left: 10px; color: var(--accent);">Recent logs</a>
         </div>
+      </div>
+      <div style="font-size: 11px; color: var(--accent); margin-bottom: 8px; padding: 4px 0;">
+        <strong>When confidence is checked:</strong> At each <strong>5m candle close</strong> (per enabled pair). See countdown above for next run. Execute (paper) requires MODE: PAPER and pair enabled.
       </div>
       <div id="pairSignalsContainer" style="display: flex; gap: 10px; flex-wrap: wrap;">
         <div style="color: var(--gray-2); font-size: 12px; padding: 10px;">Loading pairs...</div>
@@ -131,11 +140,12 @@
     </div>
 
 
-    <!-- Open Trades Multi-View Section -->
+    <!-- Open Trades Multi-View Section (shows all 1–3 open positions with TP/SL and full details) -->
     <div class="open-trades-section">
       <div class="panel-title">
         🔄 Open Positions
         <div class="panel-tools">
+          <span id="openTradesCount" style="font-size: 11px; margin-right: 8px;">No open positions (max 3)</span>
           <span id="openTradesModeBadge" style="font-size: 11px; color: var(--gray-1);">Mode: REAL</span>
         </div>
       </div>
@@ -153,28 +163,35 @@
     <!-- Charts and Favorites Layout (70/30) -->
     <div class="charts-pairs-container">
       <div class="charts-section">
-        <!-- Candlestick Chart (Main Dynamic Chart) -->
+        <!-- Chart type: Our chart (candle updates) vs TradingView (real-time) -->
         <div class="chart-panel wide">
           <div class="panel-title">
-            🕯️ Live Price Chart (Interactive) — Threshold: 90%
+            🕯️ Price Chart
             <div class="panel-tools">
+              <span style="font-size: 11px; color: var(--gray-2); margin-right: 8px;">Chart:</span>
+              <button type="button" id="chartTabOur" class="chart-tab active" onclick="switchChartTab('our')" style="padding: 4px 10px; margin-right: 4px; font-size: 11px;">Our chart</button>
+              <button type="button" id="chartTabTv" class="chart-tab" onclick="switchChartTab('tradingview')" style="padding: 4px 10px; font-size: 11px;">TradingView live</button>
               <select id="candlePairSelect" onchange="onCandlePairSelect()"
-                style="padding: 4px 8px; background: #1e2a35; color: #00e5ff; border: 1px solid #2a3a45; border-radius: 4px; font-family: Space Mono; font-size: 12px; min-width: 120px;">
+                style="padding: 4px 8px; background: #1e2a35; color: #00e5ff; border: 1px solid #2a3a45; border-radius: 4px; font-family: Space Mono; font-size: 12px; min-width: 120px; margin-left: 12px;">
                 <option value="">Select Pair...</option>
               </select>
               <select id="candleTimeframe" onchange="onTimeframeChange()"
-                style="padding: 4px 8px; background: #1e2a35; color: #00e5ff; border: 1px solid #2a3a45; border-radius: 4px; font-family: Space Mono; font-size: 12px;">
+                style="padding: 4px 8px; background: #1e2a35; color: #00e5ff; border: 1px solid #2a3a45; border-radius: 4px; font-family: Space Mono; font-size: 12px; margin-left: 4px;">
                 <option value="1m">1m</option>
                 <option value="5m" selected>5m</option>
                 <option value="15m">15m</option>
                 <option value="1h">1h</option>
                 <option value="4h">4h</option>
               </select>
-              <span id="candleInfo" style="color: #4a6070; font-size: 11px; margin-left: 12px;">— Zoom: Wheel | Pan:
-                Drag</span>
+              <span id="candleInfo" style="color: #4a6070; font-size: 11px; margin-left: 12px;">—</span>
             </div>
           </div>
-          <div id="candleChart" style="width: 100%; height: 400px; background: #0f1419;"></div>
+          <div id="ourChartContainer" style="width: 100%;">
+            <div id="candleChart" style="width: 100%; height: 400px; background: #0f1419;"></div>
+          </div>
+          <div id="tradingviewContainer" style="display: none; width: 100%; height: 450px; background: #0f1419;">
+            <div id="tradingview_chart" style="width: 100%; height: 100%;"></div>
+          </div>
         </div>
 
         <!-- Side-by-side Charts -->
@@ -202,73 +219,6 @@
         <div class="chart-panel" style="flex: 1; overflow-y: auto;">
           <div class="panel-title">⭐ Quick View</div>
           <div id="favoritesPanel" style="display: flex; flex-direction: column; gap: 6px; font-size: 12px;"></div>
-        </div>
-      </div>
-    </div>
-
-
-    <!-- Pair Manager Section (NEW) -->
-    <div class="pair-manager-section" style="margin: 20px 0;">
-      <div class="panel-title">
-        ⚙️ Pair Manager
-        <div class="panel-tools" style="font-size: 11px; color: var(--gray-2);">
-          Select up to 10 pairs to trade with custom leverage & INR amounts
-        </div>
-      </div>
-      
-      <div class="chart-panel" style="padding: 20px;">
-        <!-- Search and Filter -->
-        <div style="display: flex; gap: 12px; margin-bottom: 16px; align-items: center;">
-          <input type="text" id="pairSearchInput" placeholder="Search pairs (e.g., BTC, ETH)..." 
-            oninput="filterPairs()"
-            style="flex: 1; padding: 8px 12px; background: var(--bg); color: var(--text); border: 1px solid var(--gray-2); border-radius: 4px; font-family: 'Space Mono'; font-size: 12px;">
-
-          <button id="pairScanBtn" onclick="scanVisibleSignals()"
-            style="padding: 8px 16px; background: var(--accent); color: #000; border: 1px solid var(--accent); border-radius: 4px; font-family: 'Space Mono'; font-size: 11px; font-weight: 700; cursor: pointer;">
-            📡 Scan Signals (Top 10)
-          </button>
-
-          <button onclick="showOnlyEnabled()" id="showEnabledBtn"
-            style="padding: 8px 16px; background: var(--gray-3); color: var(--text); border: 1px solid var(--gray-2); border-radius: 4px; font-family: 'Space Mono'; font-size: 11px; cursor: pointer;">
-            Show Enabled Only
-          </button>
-          
-          <button onclick="disableAllPairs()"
-            style="padding: 8px 16px; background: var(--red); color: #fff; border: 1px solid var(--red); border-radius: 4px; font-family: 'Space Mono'; font-size: 11px; font-weight: 700; cursor: pointer;">
-            Disable All
-          </button>
-          
-          <button onclick="refreshAvailablePairs()"
-            style="padding: 8px 16px; background: var(--accent); color: #000; border: 1px solid var(--accent); border-radius: 4px; font-family: 'Space Mono'; font-size: 11px; font-weight: 700; cursor: pointer;">
-            🔄 Refresh Pairs
-          </button>
-        </div>
-
-        <!-- Pair List with Config -->
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 11px; color: var(--gray-1);">
-          <div>
-            Page <span id="pairPage">1</span> / <span id="pairTotalPages">1</span>
-          </div>
-          <div style="display: flex; gap: 8px;">
-            <button id="pairPrevBtn" onclick="prevPairPage()"
-              style="padding: 4px 10px; background: var(--gray-3); color: var(--text); border: 1px solid var(--gray-2); border-radius: 4px; font-family: 'Space Mono'; font-size: 11px; cursor: pointer;">
-              ◀ Prev
-            </button>
-            <button id="pairNextBtn" onclick="nextPairPage()"
-              style="padding: 4px 10px; background: var(--gray-3); color: var(--text); border: 1px solid var(--gray-2); border-radius: 4px; font-family: 'Space Mono'; font-size: 11px; cursor: pointer;">
-              Next ▶
-            </button>
-          </div>
-        </div>
-        <div id="pairManagerList" style="max-height: 400px; overflow-y: auto;">
-          <div style="color: var(--gray-2); text-align: center; padding: 20px;">
-            Loading available pairs...
-          </div>
-        </div>
-
-        <!-- Summary -->
-        <div id="pairManagerSummary" style="margin-top: 16px; padding: 12px; background: var(--gray-3); border-radius: 4px; font-size: 11px; color: var(--gray-1);">
-          <span id="enabledCount">0</span> pairs enabled (max 10)
         </div>
       </div>
     </div>
@@ -346,14 +296,31 @@
   <!-- Toast Notification -->
   <div class="toast" id="toast"></div>
 
+  <!-- Bot log file modal (Recent logs) -->
+  <div id="botLogsModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 1000; align-items: center; justify-content: center; flex-direction: column;">
+    <div style="background: var(--gray-3); border: 1px solid var(--gray-2); border-radius: 8px; max-width: 90vw; max-height: 85vh; width: 800px; display: flex; flex-direction: column;">
+      <div style="padding: 12px 16px; border-bottom: 1px solid var(--gray-2); display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px;">
+        <span style="font-weight: 700;">Recent bot logs (IST, newest first, last 2 days)</span>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <label style="font-size: 11px; color: var(--gray-2); cursor: pointer;">
+            <input type="checkbox" id="botLogsFilterExecution" style="margin-right: 4px;"> Only execution (candle close, signal, PAPER entry, errors)
+          </label>
+          <button type="button" id="botLogsModalClose" style="padding: 4px 12px; cursor: pointer;">Close</button>
+        </div>
+      </div>
+      <pre id="botLogsModalContent" style="margin: 0; padding: 12px; overflow: auto; flex: 1; font-size: 11px; line-height: 1.4; white-space: pre-wrap; word-break: break-all;">Loading…</pre>
+      <div id="botLogsModalHint" style="padding: 8px 12px; font-size: 10px; color: var(--gray-2); border-top: 1px solid var(--gray-2);"></div>
+    </div>
+  </div>
+
   <!-- Scripts (in order of dependency) -->
   <script src="js/app.js"></script>
   <script src="js/charts.js"></script>
   <script src="js/candlestick.js"></script>
+  <script src="js/tradingview-embed.js"></script>
   <script src="js/data.js"></script>
   <script src="js/ui.js"></script>
   <script src="js/pair-mode.js"></script>
-  <script src="js/pair-manager.js"></script>
   <script src="js/init.js"></script>
 
 </body>

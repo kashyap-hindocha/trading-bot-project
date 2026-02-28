@@ -115,6 +115,16 @@ class StrategyManager:
         """Get the name of the currently active strategy."""
         return self.active_strategy_name
 
+    def get_strategy_instance(self, strategy_key: str) -> Optional[TradingStrategy]:
+        """Get a strategy instance by key (e.g. double_ema_pullback). Used for per-pair execution."""
+        if not strategy_key or strategy_key not in self.strategies:
+            return None
+        try:
+            return self.strategies[strategy_key]()
+        except Exception as e:
+            logger.error(f"Failed to get strategy instance {strategy_key}: {e}")
+            return None
+
     def evaluate(self, candles: List[Dict], return_confidence: bool = True) -> Optional[Dict]:
         """Evaluate candles using the active strategy."""
         if not self.active_strategy:

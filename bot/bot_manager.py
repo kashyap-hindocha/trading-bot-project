@@ -11,16 +11,25 @@ import signal
 import logging
 import subprocess
 from pathlib import Path
+from logging.handlers import TimedRotatingFileHandler
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import db
+import runtime_config
+
+os.makedirs(runtime_config.data_dir(), exist_ok=True)
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler("/home/ubuntu/trading-bot/data/bot_manager.log"),
+        TimedRotatingFileHandler(
+            runtime_config.bot_manager_log_path(),
+            when="midnight",
+            interval=1,
+            backupCount=2,
+        ),
     ],
 )
 logger = logging.getLogger(__name__)
@@ -137,7 +146,7 @@ def main():
     logger.info("=== Bot Manager Starting ===")
     
     # Initialize database
-    os.makedirs("/home/ubuntu/trading-bot/data", exist_ok=True)
+    os.makedirs(runtime_config.data_dir(), exist_ok=True)
     db.init_db()
     db.log_event("INFO", "Bot Manager started")
     

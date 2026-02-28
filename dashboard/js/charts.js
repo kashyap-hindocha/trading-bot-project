@@ -63,7 +63,7 @@ function initCharts() {
 async function updatePriceChart() {
   if (!selectedPair || !priceChart) return; // Skip if chart doesn't exist
   try {
-    const resp = await fetch(API + `/api/candles?pair=${encodeURIComponent(selectedPair)}&limit=200`);
+    const resp = await fetch(API + `/api/candles?pair=${encodeURIComponent(selectedPair)}&limit=80`);
     const candles = await resp.json();
     const labels = candles.map(c => (c.timestamp || c.t || '').toString().slice(11, 16));
     const prices = candles.map(c => Number(c.close ?? c.c ?? 0));

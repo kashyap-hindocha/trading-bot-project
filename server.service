@@ -4,9 +4,11 @@ After=network.target
 
 [Service]
 Type=simple
+# On server (GitHub deploy): User=ubuntu, path /home/ubuntu/trading-bot.
 User=ubuntu
 WorkingDirectory=/home/ubuntu/trading-bot
 Environment=PATH=/home/ubuntu/trading-bot/venv/bin
+Environment=BOT_HOME=/home/ubuntu/trading-bot
 ExecStart=/home/ubuntu/trading-bot/venv/bin/python server/app.py
 Restart=always
 RestartSec=5

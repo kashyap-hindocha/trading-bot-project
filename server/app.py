@@ -1,12 +1,37 @@
 import sys
 import os
+import re
 import json
-sys.path.insert(0, '/home/ubuntu/trading-bot/bot')
+
+# Prefer project-relative bot path so strategy loads when not on ubuntu
+_bot_path = os.path.join(os.path.dirname(__file__), '..', 'bot')
+if os.path.isdir(os.path.abspath(_bot_path)):
+    sys.path.insert(0, os.path.abspath(_bot_path))
+else:
+    sys.path.insert(0, '/home/ubuntu/trading-bot/bot')
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from datetime import datetime, timezone, timedelta
 import db
+
+# runtime config (paths, etc) lives in bot/ and should be on sys.path above
+try:
+    import runtime_config
+except Exception:
+    runtime_config = None
+
+
+def _load_env():
+    """Load env vars from BOT_ENV_FILE (or default)."""
+    try:
+        from dotenv import load_dotenv
+        if runtime_config:
+            load_dotenv(runtime_config.env_file())
+        else:
+            load_dotenv()
+    except Exception:
+        pass
 
 # Try to import strategy_manager, fallback if fails
 try:
@@ -17,7 +42,9 @@ except Exception as e:
     logging.error(f"Failed to import strategy_manager: {e}")
     STRATEGY_MANAGER_LOADED = False
 
-from coindcx import CoinDCXREST
+from coindcx import CoinDCXREST, CoinDCXSocket
+import threading
+import time
 
 # IST timezone (UTC+5:30)
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -274,8 +301,7 @@ def _get_real_balance():
     balance = 0.0
     balance_currency = "INR"
     try:
-        from dotenv import load_dotenv
-        load_dotenv("/home/ubuntu/trading-bot/.env")
+        _load_env()
         key = os.getenv("COINDCX_API_KEY")
         secret = os.getenv("COINDCX_API_SECRET")
 
@@ -444,6 +470,7 @@ def open_trades():
                 "sl_price": trade.get("sl_price"),
                 "opened_at": trade.get("opened_at"),
                 "status": trade.get("status", "open"),
+                "strategy_name": trade.get("strategy_name"),
             })
         return jsonify(enhanced)
     except Exception as e:
@@ -474,6 +501,7 @@ def open_paper_trades():
                 "sl_price": trade.get("sl_price"),
                 "opened_at": trade.get("opened_at"),
                 "status": trade.get("status", "open"),
+                "strategy_name": trade.get("strategy_name"),
             })
         return jsonify(enhanced)
     except Exception as e:
@@ -504,25 +532,33 @@ def trading_mode():
 def strategies():
     if request.method == "GET":
         try:
+            active = db.get_active_strategy()
+            confidence_threshold = db.get_confidence_threshold()
             if not STRATEGY_MANAGER_LOADED:
                 return jsonify({
                     "strategies": [],
-                    "active": None,
+                    "active": active,
+                    "confidence_threshold": confidence_threshold,
                     "error": "Strategy manager not loaded"
                 }), 500
-            
+
             available_strategies = strategy_manager.strategy_manager.get_available_strategies()
-            active_strategy = strategy_manager.strategy_manager.get_active_strategy_name()
-            
             result = {
                 "strategies": [{"name": s["name"], "displayName": s.get("display_name", s["name"]), "description": s["description"]} for s in available_strategies],
-                "active": active_strategy
+                "active": active,
+                "confidence_threshold": confidence_threshold,
             }
             return jsonify(result)
         except Exception as e:
+            try:
+                active = db.get_active_strategy()
+                confidence_threshold = db.get_confidence_threshold()
+            except Exception:
+                active, confidence_threshold = "double_ema_pullback", 80.0
             return jsonify({
                 "strategies": [],
-                "active": None,
+                "active": active,
+                "confidence_threshold": confidence_threshold,
                 "error": str(e)
             }), 500
 
@@ -531,16 +567,26 @@ def strategies():
 
     data = request.get_json() or {}
     strategy_name = str(data.get("strategy", "")).strip()
-    
-    if not strategy_name:
-        return jsonify({"error": "strategy name is required"}), 400
+    threshold_raw = data.get("confidence_threshold")
 
     try:
-        strategy_manager.strategy_manager.set_active_strategy(strategy_name)
-        db.log_event("INFO", f"Active strategy changed to {strategy_name}")
-        return jsonify({"success": True, "strategy": strategy_name})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 400
+        if strategy_name:
+            if strategy_name not in getattr(strategy_manager.strategy_manager, "strategies", {}):
+                return jsonify({"error": f"Unknown strategy: {strategy_name}"}), 400
+            strategy_manager.strategy_manager.set_active_strategy(strategy_name)
+            db.set_active_strategy(strategy_name)
+            db.log_event("INFO", f"Active strategy set to {strategy_name}")
+        if threshold_raw is not None:
+            threshold = float(threshold_raw)
+            if not (0 <= threshold <= 100):
+                return jsonify({"error": "confidence_threshold must be between 0 and 100"}), 400
+            db.set_confidence_threshold(threshold)
+            db.log_event("INFO", f"Confidence threshold set to {threshold}%")
+        active = db.get_active_strategy()
+        confidence_threshold = db.get_confidence_threshold()
+        return jsonify({"success": True, "active": active, "confidence_threshold": confidence_threshold})
+    except (TypeError, ValueError) as e:
+        return jsonify({"error": f"Invalid value: {e}"}), 400
 
 
 @app.route("/api/paper/balance")
@@ -563,123 +609,90 @@ def paper_reset():
 
 
 
-def _ema(values, period):
-    if len(values) < period:
-        return []
-    k = 2 / (period + 1)
-    ema = [sum(values[:period]) / period]
-    for v in values[period:]:
-        ema.append(v * k + ema[-1] * (1 - k))
-    return ema
-
-
-def _rsi(closes, period):
-    if len(closes) < period + 1:
-        return 50.0
-    deltas = [closes[i] - closes[i - 1] for i in range(1, len(closes))]
-    gains = [d if d > 0 else 0 for d in deltas[-period:]]
-    losses = [-d if d < 0 else 0 for d in deltas[-period:]]
-    avg_gain = sum(gains) / period
-    avg_loss = sum(losses) / period
-    if avg_loss == 0:
-        return 100.0
-    rs = avg_gain / avg_loss
-    return round(100 - (100 / (1 + rs)), 2)
-
-
-def _compute_readiness(closes):
-    """
-    Compute readiness as PROXIMITY to trade conditions.
-    Shows how close we are to executing (90% = ready to execute).
-    """
-    active_strategy = strategy_manager.strategy_manager.get_active_strategy()
-    if not active_strategy:
-        return None
-    
-    config = active_strategy.get_config()
-    ema_fast_series = _ema(closes, config["ema_fast"])
-    ema_slow_series = _ema(closes, config["ema_slow"])
-    if not ema_fast_series or not ema_slow_series:
-        return None
-
-    ema_fast = ema_fast_series[-1]
-    ema_slow = ema_slow_series[-1]
-    rsi = _rsi(closes, config["rsi_period"])
-    overbought = config["rsi_overbought"]
-    oversold = config["rsi_oversold"]
-
-    price = closes[-1] if closes else 0
-    gap = abs(ema_fast - ema_slow)
-    gap_pct = (gap / price) if price else 0
-    gap_max = 0.003  # Max gap % for scoring
-
-    def score_gap(local_gap):
-        """Score how close EMAs are (closer = higher score)"""
-        if local_gap >= gap_max:
-            return 0.0
-        return max(0.0, 1 - (local_gap / gap_max))
-
-    # EMA proximity scores (higher when EMAs are close)
-    ema_buy_score = score_gap(gap_pct) if ema_fast <= ema_slow else 0.0
-    ema_sell_score = score_gap(gap_pct) if ema_fast >= ema_slow else 0.0
-
-    # RSI alignment scores
-    rsi_band = 20.0
-    rsi_buy_score = 1.0 if rsi <= oversold else max(0.0, 1 - ((rsi - oversold) / rsi_band))
-    rsi_sell_score = 1.0 if rsi >= overbought else max(0.0, 1 - ((overbought - rsi) / rsi_band))
-
-    # Combine scores (60% EMA proximity, 40% RSI alignment)
-    buy_readiness = (ema_buy_score * 0.6 + rsi_buy_score * 0.4) * 100
-    sell_readiness = (ema_sell_score * 0.6 + rsi_sell_score * 0.4) * 100
-
-    readiness = round(max(buy_readiness, sell_readiness), 1)
-    bias = "BUY" if buy_readiness >= sell_readiness else "SELL"
-
-    return {
-        "readiness": readiness,
-        "bias": bias,
-        "ema_gap_pct": round(gap_pct * 100, 3),
-        "rsi": rsi,
-    }
-
-
-@app.route("/api/signal/readiness")
-def signal_readiness():
+def _get_coindcx_client():
+    """Get CoinDCX client (authenticated if available, else public)."""
     try:
-        pairs_raw = request.args.get("pairs", "")
-        pairs = [p.strip() for p in pairs_raw.split(",") if p.strip()]
-        if not pairs:
-            return jsonify([])
+        _load_env()
+        key = os.getenv("COINDCX_API_KEY")
+        secret = os.getenv("COINDCX_API_SECRET")
+        if key and secret:
+            return CoinDCXREST(key, secret)
+    except Exception:
+        pass
+    return CoinDCXREST("", "")
 
-        client = CoinDCXREST("", "")
-        results = []
-        active_strategy = strategy_manager.strategy_manager.get_active_strategy()
-        interval = active_strategy.get_config().get("interval", "1m") if active_strategy else "1m"
-        
-        for pair in pairs[:20]:
-            try:
-                candles = client.get_candles(pair, interval, limit=150)
-                closes = [c.get("close") for c in candles if c.get("close") is not None]
-                readiness = _compute_readiness(closes)
-                # _compute_readiness may return None if not enough data; treat that as 0%
-                if readiness is None:
-                    results.append({
-                        "pair": pair,
-                        "readiness": 0.0,
-                        "bias": None,
-                        "ema_gap_pct": None,
-                        "rsi": None,
-                    })
-                else:
-                    # Even readiness 0.0 is meaningful; don't filter it out
-                    results.append({"pair": pair, **readiness})
-            except Exception as e:
-                app.logger.warning(f"Readiness failed for {pair}: {e}")
-        return jsonify(results)
+
+def _seed_pair_config_if_empty():
+    """Seed pair_config from CoinDCX if empty."""
+    configs = db.get_all_pair_configs()
+    if configs:
+        return
+    try:
+        client = _get_coindcx_client()
+        instruments = client.get_active_instruments()
+        if not isinstance(instruments, list):
+            return
+        for inst in instruments:
+            symbol = inst if isinstance(inst, str) else (inst.get("symbol") or inst.get("pair", ""))
+            if symbol and "USDT" in symbol:
+                try:
+                    db.upsert_pair_config(symbol, 0, 5, 0.001, 300.0)
+                except Exception:
+                    pass
+        app.logger.info("Seeded pair_config from CoinDCX")
     except Exception as e:
-        import traceback
-        app.logger.error(f"Readiness endpoint failed: {e}")
-        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
+        app.logger.warning(f"Could not seed pair_config: {e}")
+
+
+def _get_strategy_instance(strategy_key):
+    """Return a strategy instance by key (e.g. double_ema_pullback). Used by manual execute."""
+    if not STRATEGY_MANAGER_LOADED or not strategy_key:
+        return None
+    try:
+        strategies = getattr(strategy_manager.strategy_manager, "strategies", {})
+        strategy_class = strategies.get(strategy_key)
+        if strategy_class:
+            return strategy_class()
+    except Exception as e:
+        app.logger.warning(f"Could not get strategy {strategy_key}: {e}")
+    return None
+
+
+def _compute_confidence_for_enabled_pairs(enabled_pairs, max_pairs=20):
+    """Run active strategy on latest 5m candles for each enabled pair. Returns dict pair -> confidence (float or None)."""
+    out = {}
+    if not enabled_pairs:
+        return out
+    active_strategy_key = db.get_active_strategy()
+    strat = _get_strategy_instance(active_strategy_key)
+    if not strat and STRATEGY_MANAGER_LOADED:
+        strat = strategy_manager.strategy_manager.get_active_strategy()
+    if not strat:
+        return out
+    client = _get_coindcx_client()
+    for cfg in enabled_pairs[:max_pairs]:
+        pair = cfg.get("pair")
+        if not pair:
+            continue
+        try:
+            candles = client.get_candles(pair, "5m", limit=200)
+            if not candles or len(candles) < 50:
+                out[pair] = None
+                continue
+            candles_norm = [
+                {"open": c.get("open", c.get("o")), "high": c.get("high", c.get("h")), "low": c.get("low", c.get("l")),
+                 "close": c.get("close", c.get("c")), "volume": c.get("volume", c.get("v", 0)), "time": c.get("time", c.get("t"))}
+                for c in candles
+            ]
+            ev = strat.evaluate(candles_norm, return_confidence=True)
+            if isinstance(ev, dict):
+                out[pair] = round(float(ev.get("confidence", 0)), 1)
+            else:
+                out[pair] = 0.0
+        except Exception as e:
+            app.logger.debug(f"Current confidence for {pair}: {e}")
+            out[pair] = None
+    return out
 
 
 @app.route("/api/candles")
@@ -688,10 +701,10 @@ def get_candles():
     try:
         pair = request.args.get("pair", "B-BTC_USDT")
         interval = request.args.get("interval", "5m")
-        limit = int(request.args.get("limit", 100))
-        
-        if limit > 500:
-            limit = 500
+        limit = int(request.args.get("limit", 50))
+        # Cap at 80 to match UI chart needs and save data
+        if limit > 80:
+            limit = 80
         
         client = CoinDCXREST("", "")
         candles = client.get_candles(pair, interval, limit=limit)
@@ -734,8 +747,7 @@ def handle_api_error(error):
 @app.route("/api/debug/wallet")
 def debug_wallet():
     try:
-        from dotenv import load_dotenv
-        load_dotenv("/home/ubuntu/trading-bot/.env")
+        _load_env()
         key = os.getenv("COINDCX_API_KEY")
         secret = os.getenv("COINDCX_API_SECRET")
         
@@ -816,14 +828,231 @@ def bot_stop():
 def bot_status():
     import subprocess
     try:
-        result = subprocess.run(
-            ["/usr/bin/systemctl", "is-active", "bot"],
-            capture_output=True, text=True, timeout=5
-        )
-        is_running = result.stdout.strip() == "active"
-        return jsonify({"running": is_running})
+        # Try user first, then system
+        for cmd in [["systemctl", "--user", "is-active", "bot.service"], ["/usr/bin/systemctl", "is-active", "bot"]]:
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+                if result.returncode == 0 and result.stdout.strip() == "active":
+                    return jsonify({"running": True})
+            except Exception:
+                continue
+        return jsonify({"running": False})
     except Exception:
         return jsonify({"running": False})
+
+
+@app.route("/api/paper/diagnostic")
+def paper_diagnostic():
+    """Help debug why paper trades might not run: mode, wallet, enabled pairs, checklist."""
+    try:
+        mode = db.get_trading_mode()
+        paper_balance = db.get_paper_wallet_balance()
+        enabled = db.get_enabled_pairs()
+        enabled_pairs = [p.get("pair") for p in enabled if p.get("pair")]
+        open_paper = db.get_open_paper_trades()
+        checks = []
+        if mode != "PAPER":
+            checks.append("Mode is not PAPER; switch to PAPER in dashboard to run paper trades.")
+        if paper_balance is None or (isinstance(paper_balance, (int, float)) and paper_balance <= 0):
+            checks.append("Paper wallet not initialized or zero. Switch to PAPER mode once in dashboard to seed it.")
+        if not enabled_pairs:
+            checks.append("No pairs enabled. Batch checker enables pairs at >=75%% confidence.")
+        if len(open_paper) >= 3:
+            checks.append("Already 3 open paper trades (max). Close one to allow new entries.")
+        if not checks:
+            checks.append("Config looks OK. Trades run on 5m candle close. Check bot logs for 'Closed candle', 'Signal', 'PAPER entry' or 'Signal rejected'.")
+        return jsonify({
+            "mode": mode,
+            "paper_balance": paper_balance,
+            "enabled_pairs_count": len(enabled_pairs),
+            "enabled_pairs": enabled_pairs[:20],
+            "open_paper_count": len(open_paper),
+            "checks": checks,
+        })
+    except Exception as e:
+        app.logger.error(f"Paper diagnostic: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+TAKER_FEE_RATE = 0.0005  # 0.05% for paper trade fee simulation
+
+
+@app.route("/api/paper/execute_trade", methods=["POST"])
+def paper_execute_trade():
+    """Manually execute a paper trade for an enabled pair only. Use to test API/strategy and see errors."""
+    try:
+        data = request.get_json() or {}
+        pair = (data.get("pair") or "").strip()
+        if not pair:
+            return jsonify({"success": False, "error": "Missing 'pair' (e.g. B-OP_USDT)"}), 400
+
+        enabled_pairs = db.get_enabled_pairs()
+        enabled_pair_names = {p.get("pair") for p in enabled_pairs if p.get("pair")}
+        if pair not in enabled_pair_names:
+            return jsonify({"success": False, "error": f"Pair {pair} is not enabled. Enable it first."}), 400
+
+        mode = db.get_trading_mode()
+        if mode != "PAPER":
+            return jsonify({"success": False, "error": "Manual execute is paper-only. Switch mode to PAPER."}), 400
+
+        pair_config = next((c for c in enabled_pairs if c.get("pair") == pair), None)
+        if not pair_config:
+            return jsonify({"success": False, "error": "Pair config not found"}), 400
+
+        client = _get_coindcx_client()
+        candles = client.get_candles(pair, "5m", limit=200)
+        if not candles or len(candles) < 50:
+            return jsonify({"success": False, "error": f"Not enough candles for {pair} (need ≥50)"}), 400
+
+        candles_norm = [
+            {"open": c.get("open", c.get("o")), "high": c.get("high", c.get("h")), "low": c.get("low", c.get("l")),
+             "close": c.get("close", c.get("c")), "volume": c.get("volume", c.get("v", 0)), "time": c.get("time", c.get("t"))}
+            for c in candles
+        ]
+        current_price = float(candles[-1].get("close", candles[-1].get("c", 0)))
+        if not current_price:
+            return jsonify({"success": False, "error": "Could not get current price"}), 400
+
+        active_strategy_key = db.get_active_strategy()
+        strat_instance = _get_strategy_instance(active_strategy_key)
+        if not strat_instance and STRATEGY_MANAGER_LOADED:
+            strat_instance = strategy_manager.strategy_manager.get_active_strategy()
+        if not strat_instance:
+            return jsonify({"success": False, "error": "No strategy available for this pair"}), 500
+
+        ev = strat_instance.evaluate(candles_norm, return_confidence=True)
+        if isinstance(ev, dict):
+            signal = ev.get("signal")
+            confidence = float(ev.get("confidence", 0))
+            atr = float(ev.get("atr", 0))
+            position_size = float(ev.get("position_size", 0))
+            trailing_stop = float(ev.get("trailing_stop", 0))
+        else:
+            signal = ev
+            confidence = atr = position_size = trailing_stop = 0.0
+
+        if not signal:
+            return jsonify({
+                "success": False,
+                "message": "No signal from strategy",
+                "confidence": round(confidence, 1),
+            }), 200
+
+        leverage = int(pair_config.get("leverage", 5))
+        quantity = float(pair_config.get("quantity", 0.001))
+        inr_amount = pair_config.get("inr_amount")
+        if inr_amount is not None and inr_amount != "":
+            inr_amount = float(inr_amount)
+        else:
+            inr_amount = None
+        if inr_amount and current_price > 0:
+            rate = client.get_inr_usdt_rate()
+            if rate and rate > 0:
+                usdt_margin = inr_amount / rate
+                quantity = (usdt_margin * leverage) / current_price
+
+        wallet_balance = db.get_paper_wallet_balance()
+        if wallet_balance is None or wallet_balance <= 0:
+            return jsonify({"success": False, "error": "Paper wallet not initialized. Switch to PAPER mode once."}), 400
+        entry_fee = current_price * quantity * TAKER_FEE_RATE
+        if entry_fee > wallet_balance:
+            return jsonify({"success": False, "error": "PAPER wallet insufficient for fee"}), 400
+
+        tp_price, sl_price = strat_instance.calculate_tp_sl(current_price, signal, atr) if strat_instance else (0, 0)
+        side = "buy" if signal == "LONG" else "sell"
+        order_id = f"PAPER-MANUAL-{int(time.time() * 1000)}"
+        position_id = f"PAPER-POS-{order_id}"
+        strategy_key = db.get_active_strategy()
+
+        db.set_paper_wallet_balance(wallet_balance - entry_fee)
+        db.insert_paper_trade(
+            pair=pair,
+            side=side,
+            entry_price=current_price,
+            quantity=quantity,
+            leverage=leverage,
+            tp_price=tp_price,
+            sl_price=sl_price,
+            fee_paid=entry_fee,
+            order_id=order_id,
+            position_id=position_id,
+            strategy_name=strategy_key,
+            strategy_note=f"Manual execute | {signal} | Confidence: {confidence:.1f}%",
+            confidence=confidence,
+            atr=atr,
+            position_size=position_size,
+            trailing_stop=trailing_stop,
+        )
+        db.upsert_pair_execution_status(pair, last_signal=signal, last_confidence=confidence, last_error=None)
+        db.log_event("INFO", f"Manual PAPER entry {pair} {signal} qty={quantity} lev={leverage} | Confidence: {confidence:.1f}%")
+
+        return jsonify({
+            "success": True,
+            "message": f"PAPER {signal} {pair} @ {current_price}",
+            "order_id": order_id,
+            "position_id": position_id,
+            "side": side,
+            "quantity": quantity,
+            "leverage": leverage,
+            "tp_price": tp_price,
+            "sl_price": sl_price,
+            "confidence": round(confidence, 1),
+        })
+    except Exception as e:
+        app.logger.exception(f"Manual execute failed: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/paper/close_trade", methods=["POST"])
+def paper_close_trade():
+    """Manually close an open paper trade at the current market price."""
+    try:
+        data = request.get_json() or {}
+        position_id = (data.get("position_id") or "").strip()
+        if not position_id:
+            return jsonify({"success": False, "error": "Missing 'position_id'"}), 400
+
+        open_trades = db.get_open_paper_trades()
+        trade = next((t for t in open_trades if str(t.get("position_id")) == position_id), None)
+        if not trade:
+            return jsonify({"success": False, "error": f"No open paper trade with position_id={position_id}"}), 404
+
+        pair = trade["pair"]
+        client = _get_coindcx_client()
+        candles = client.get_candles(pair, "5m", limit=5)
+        if not candles:
+            return jsonify({"success": False, "error": f"Could not fetch current price for {pair}"}), 500
+        exit_price = float(candles[-1].get("close", candles[-1].get("c", 0)))
+        if not exit_price:
+            return jsonify({"success": False, "error": "Could not determine current price"}), 500
+
+        entry_price = float(trade["entry_price"])
+        quantity = float(trade["quantity"])
+        side = trade["side"]
+        leverage = float(trade.get("leverage", 1))
+
+        if side == "buy":
+            raw_pnl = (exit_price - entry_price) * quantity * leverage
+        else:
+            raw_pnl = (entry_price - exit_price) * quantity * leverage
+
+        exit_fee = exit_price * quantity * TAKER_FEE_RATE
+        net_pnl = raw_pnl - exit_fee
+
+        db.close_paper_trade(position_id, exit_price, net_pnl, exit_fee)
+        wallet = db.get_paper_wallet_balance() or 0.0
+        db.set_paper_wallet_balance(wallet + exit_fee + net_pnl)
+        db.log_event("INFO", f"Manual close PAPER {pair} @ {exit_price} | PnL: {net_pnl:.4f}")
+
+        return jsonify({
+            "success": True,
+            "message": f"Closed {pair} @ {exit_price:.4f} | PnL: {net_pnl:+.4f} USDT",
+            "exit_price": exit_price,
+            "pnl": round(net_pnl, 4),
+        })
+    except Exception as e:
+        app.logger.exception(f"Close paper trade failed: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 # ── Pair Management ──────────────────────────
@@ -831,8 +1060,7 @@ def bot_status():
 def pairs_available():
     """Get all available trading pairs from CoinDCX."""
     try:
-        from dotenv import load_dotenv
-        load_dotenv("/home/ubuntu/trading-bot/.env")
+        _load_env()
         key = os.getenv("COINDCX_API_KEY")
         secret = os.getenv("COINDCX_API_SECRET")
         
@@ -965,8 +1193,7 @@ def pairs_prices():
         if not enabled_pairs:
             return jsonify({})
         
-        from dotenv import load_dotenv
-        load_dotenv("/home/ubuntu/trading-bot/.env")
+        _load_env()
         key = os.getenv("COINDCX_API_KEY")
         secret = os.getenv("COINDCX_API_SECRET")
         
@@ -1136,35 +1363,18 @@ def trades_by_pair():
 
 @app.route("/api/pair_mode", methods=["GET", "POST"])
 def pair_mode():
-    """Get or set pair trading mode (SINGLE/MULTI) and selected pair."""
+    """Pair mode is MULTI only: one process per enabled pair, max 3 open trades total."""
     if request.method == "GET":
-        try:
-            mode_data = db.get_pair_mode()
-            return jsonify(mode_data)
-        except Exception as e:
-            app.logger.error(f"Error getting pair mode: {e}")
-            return jsonify({"pair_mode": "MULTI", "selected_pair": None})
+        return jsonify({"pair_mode": "MULTI", "selected_pair": None})
     
-    # POST - Set pair mode
+    # POST - Accept for compatibility; always store MULTI
     try:
         data = request.get_json() or {}
         mode = str(data.get("pair_mode", "MULTI")).upper()
-        selected_pair = data.get("selected_pair")
-        
-        if mode not in ("SINGLE", "MULTI"):
-            return jsonify({"error": "pair_mode must be SINGLE or MULTI"}), 400
-        
-        if mode == "SINGLE" and not selected_pair:
-            return jsonify({"error": "selected_pair is required for SINGLE mode"}), 400
-        
-        db.set_pair_mode(mode, selected_pair)
-        db.log_event("INFO", f"Pair mode set to {mode}" + (f" with pair {selected_pair}" if selected_pair else ""))
-        
-        return jsonify({
-            "success": True,
-            "pair_mode": mode,
-            "selected_pair": selected_pair
-        })
+        if mode == "SINGLE":
+            mode = "MULTI"
+        db.set_pair_mode(mode, None)
+        return jsonify({"success": True, "pair_mode": "MULTI", "selected_pair": None})
     except Exception as e:
         app.logger.error(f"Error setting pair mode: {e}")
         return jsonify({"error": str(e)}), 500
@@ -1172,94 +1382,173 @@ def pair_mode():
 
 @app.route("/api/pair_signals")
 def pair_signals():
-    """Get signal strength for enabled pairs only (up to 10 max)."""
+    """Return enabled pairs with last run status from bot and server-computed current (and last fallback) confidence."""
     try:
-        # Get ONLY enabled pair configs (user's favorites)
         enabled_pairs = db.get_enabled_pairs()
-        
-        if not enabled_pairs:
-            app.logger.info("No enabled pairs found. Enable pairs in Pair Manager.")
-            return jsonify([])
-        
-        # Import strategy to calculate signal strength
-        try:
-            import strategy
-        except Exception as e:
-            app.logger.error(f"Failed to import strategy: {e}")
-            return jsonify({"error": "Strategy module not available"}), 500
-        
-        client = CoinDCXREST("", "")
+        exec_status_all = db.get_pair_execution_status_all()
+        # Server-side confidence so dashboard shows actual % even when bot has not run
+        computed = _compute_confidence_for_enabled_pairs(enabled_pairs)
         results = []
-        
-        # Get active strategy config for interval
-        active_strategy = None
-        interval = "5m"  # default
-        try:
-            if STRATEGY_MANAGER_LOADED:
-                active_strategy = strategy_manager.strategy_manager.get_active_strategy()
-                if active_strategy:
-                    interval = active_strategy.get_config().get("interval", "5m")
-        except Exception:
-            pass
-        
-        # Process only enabled pairs (limit to 10 max for performance)
-        # This keeps response time under 20 seconds
-        pairs_to_process = enabled_pairs[:10]
-        app.logger.info(f"Processing {len(pairs_to_process)} enabled pairs for signal strength")
-        
-        for idx, pair_config in enumerate(pairs_to_process, 1):
-            pair = pair_config.get("pair")
+        for cfg in enabled_pairs:
+            pair = cfg.get("pair")
             if not pair:
                 continue
-            
-            try:
-                # Fetch candles for this pair
-                app.logger.debug(f"[{idx}/{len(pairs_to_process)}] Fetching candles for {pair}")
-                candles = client.get_candles(pair, interval, limit=150)
-                
-                if not candles or len(candles) < 50:
-                    results.append({
-                        "pair": pair,
-                        "signal_strength": 0.0,
-                        "enabled": pair_config.get("enabled", 0),
-                        "leverage": pair_config.get("leverage", 5),
-                        "quantity": pair_config.get("quantity", 0.001),
-                        "inr_amount": pair_config.get("inr_amount", 300.0)
-                    })
-                    continue
-                
-                # Calculate signal strength
-                signal_strength = strategy.calculate_signal_strength(candles)
-                
-                results.append({
-                    "pair": pair,
-                    "signal_strength": signal_strength,
-                    "enabled": pair_config.get("enabled", 0),
-                    "leverage": pair_config.get("leverage", 5),
-                    "quantity": pair_config.get("quantity", 0.001),
-                    "inr_amount": pair_config.get("inr_amount", 300.0),
-                    "last_price": candles[-1].get("close") if candles else None
-                })
-                app.logger.debug(f"[{idx}/{len(pairs_to_process)}] {pair}: signal={signal_strength:.1f}%")
-            except Exception as e:
-                app.logger.warning(f"Signal strength calculation failed for {pair}: {e}")
-                results.append({
-                    "pair": pair,
-                    "signal_strength": 0.0,
-                    "enabled": pair_config.get("enabled", 0),
-                    "leverage": pair_config.get("leverage", 5),
-                    "quantity": pair_config.get("quantity", 0.001),
-                    "inr_amount": pair_config.get("inr_amount", 300.0)
-                })
-        
-        # Sort by signal strength (highest first)
-        results.sort(key=lambda x: x["signal_strength"], reverse=True)
-        
-        app.logger.info(f"Pair signals ready: {len(results)} pairs, top signal: {results[0]['signal_strength']:.1f}% ({results[0]['pair']})" if results else "No pairs processed")
-        
-        return jsonify(results)
+            st = exec_status_all.get(pair, {})
+            last_conf = st.get("last_confidence")
+            if last_conf is not None:
+                last_conf = float(last_conf)
+            current_conf = computed.get(pair)
+            # When bot has never run, use server-computed as fallback for "last cycle" so UI shows a value
+            if last_conf is None and current_conf is not None:
+                last_conf = current_conf
+            results.append({
+                "pair": pair,
+                "signal_strength": float(last_conf if last_conf is not None else (current_conf if current_conf is not None else 0)),
+                "enabled": cfg.get("enabled", 1),
+                "leverage": cfg.get("leverage", 5),
+                "quantity": cfg.get("quantity", 0.001),
+                "inr_amount": cfg.get("inr_amount", 300.0),
+                "last_closed_at": st.get("last_closed_at"),
+                "last_signal": st.get("last_signal"),
+                "last_confidence": last_conf,
+                "current_confidence": current_conf,
+                "last_error": st.get("last_error"),
+            })
+        return jsonify({
+            "pairs": results,
+            "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        })
     except Exception as e:
         app.logger.error(f"Error fetching pair signals: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/current_confidence")
+def current_confidence():
+    """Return current (live) strategy confidence % for each enabled pair. Runs strategy on latest 5m candles."""
+    try:
+        enabled_pairs = db.get_enabled_pairs()
+        if not enabled_pairs:
+            return jsonify({"pairs": [], "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")})
+
+        active_strategy_key = db.get_active_strategy()
+        strat_instance = _get_strategy_instance(active_strategy_key)
+        if not strat_instance and STRATEGY_MANAGER_LOADED:
+            strat_instance = strategy_manager.strategy_manager.get_active_strategy()
+        if not strat_instance:
+            return jsonify({"pairs": [], "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")})
+
+        client = _get_coindcx_client()
+        results = []
+        for cfg in enabled_pairs:
+            pair = cfg.get("pair")
+            if not pair:
+                continue
+            try:
+                candles = client.get_candles(pair, "5m", limit=200)
+                if not candles or len(candles) < 50:
+                    results.append({"pair": pair, "current_confidence": None})
+                    continue
+                candles_norm = [
+                    {"open": c.get("open", c.get("o")), "high": c.get("high", c.get("h")), "low": c.get("low", c.get("l")),
+                     "close": c.get("close", c.get("c")), "volume": c.get("volume", c.get("v", 0)), "time": c.get("time", c.get("t"))}
+                    for c in candles
+                ]
+                ev = strat_instance.evaluate(candles_norm, return_confidence=True)
+                if isinstance(ev, dict):
+                    confidence = float(ev.get("confidence", 0))
+                else:
+                    confidence = 0.0
+                results.append({"pair": pair, "current_confidence": round(confidence, 1)})
+            except Exception as e:
+                app.logger.debug(f"Current confidence for {pair}: {e}")
+                results.append({"pair": pair, "current_confidence": None})
+        return jsonify({
+            "pairs": results,
+            "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        })
+    except Exception as e:
+        app.logger.error(f"Error fetching current confidence: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+# Allowed path for bot log (no user-controlled paths)
+BOT_LOG_PATH = runtime_config.bot_log_path() if runtime_config else "/home/ubuntu/trading-bot/data/bot.log"
+
+# Match Python logging asctime: "2026-02-24 16:55:32,123" or "2026-02-24 16:55:32"
+_BOT_LOG_TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})(?:[,.](\d+))?")
+
+
+def _parse_log_timestamp(line):
+    """Return (timestamp, line). Log asctime is local time; we use naive datetime so 2-day filter matches."""
+    m = _BOT_LOG_TS_RE.match(line)
+    if not m:
+        return (float("inf"), line)
+    date_part, ms = m.group(1), m.group(2)
+    try:
+        ts_str = date_part.replace(" ", "T") + (f".{ms.ljust(3, '0')[:3]}" if ms else ".000")
+        dt = datetime.fromisoformat(ts_str)
+        return (dt.timestamp(), line)
+    except Exception:
+        return (float("inf"), line)
+
+
+def _log_line_to_ist(line: str) -> str:
+    """Replace leading log timestamp with IST (UTC+5:30). Log timestamp is in server local time."""
+    m = _BOT_LOG_TS_RE.match(line)
+    if not m:
+        return line
+    date_part, ms = m.group(1), m.group(2)
+    try:
+        ts_str = date_part.replace(" ", "T") + (f".{ms.ljust(3, '0')[:3]}" if ms else ".000")
+        dt_naive = datetime.fromisoformat(ts_str)
+        # Python logging asctime uses server local time; convert to IST for display
+        local_tz = datetime.now().astimezone().tzinfo
+        dt_local = dt_naive.replace(tzinfo=local_tz) if local_tz else dt_naive.replace(tzinfo=timezone.utc)
+        dt_ist = dt_local.astimezone(IST)
+        ms_part = f",{ms.ljust(3, '0')[:3]}" if ms else ",000"
+        ist_prefix = dt_ist.strftime("%Y-%m-%d %H:%M:%S") + ms_part
+        return ist_prefix + line[m.end():]
+    except Exception:
+        return line
+
+
+# Keep only logs from the last 2 days (trade histories are in DB and kept separately)
+BOT_LOG_RETENTION_DAYS = 2
+
+
+@app.route("/api/bot_logs")
+def bot_logs():
+    """Return last N lines of bot.log, newest first (desc), only lines from the last 2 days."""
+    try:
+        n = request.args.get("n", 200, type=int)
+        n = min(max(1, n), 1000)
+        filter_exec = request.args.get("filter") == "execution"
+        if not os.path.isfile(BOT_LOG_PATH):
+            return jsonify({"lines": [], "path": BOT_LOG_PATH, "error": "Log file not found"})
+        with open(BOT_LOG_PATH, "r", encoding="utf-8", errors="replace") as f:
+            all_lines = f.readlines()
+        lines = [line.rstrip("\n") for line in all_lines]
+        if filter_exec:
+            keywords = (
+                "Closed candle", "Signal:", "PAPER entry", "Signal rejected", "Execution allowed",
+                "wallet not initialized", "Skip execution", "Max open trades", "Per-pair limit",
+                "No signal from strategy", "Paper trade failed", "PAPER entry skipped", "insufficient for fee",
+                "Re-entry cooldown", "No strategy"
+            )
+            lines = [ln for ln in lines if any(kw in ln for kw in keywords)]
+        # Parse timestamps and keep only last 2 days (use local time to match log asctime)
+        cutoff = (datetime.now() - timedelta(days=BOT_LOG_RETENTION_DAYS)).timestamp()
+        parsed = [_parse_log_timestamp(ln) for ln in lines]
+        parsed = [(ts, ln) for ts, ln in parsed if ts != float("inf") and ts >= cutoff]
+        # Sort descending (newest first)
+        parsed.sort(key=lambda x: x[0], reverse=True)
+        sorted_lines = [ln for _, ln in parsed[:n]]
+        # Convert timestamps to IST for display
+        sorted_lines = [_log_line_to_ist(ln) for ln in sorted_lines]
+        return jsonify({"lines": sorted_lines, "path": BOT_LOG_PATH})
+    except Exception as e:
+        app.logger.error(f"Error reading bot logs: {e}")
         return jsonify({"error": str(e)}), 500
 
 
@@ -1272,9 +1561,7 @@ def live_positions():
         import time
         import json
         import requests
-        from dotenv import load_dotenv
-        
-        load_dotenv("/home/ubuntu/trading-bot/.env")
+        _load_env()
         key = os.getenv("COINDCX_API_KEY")
         secret = os.getenv("COINDCX_API_SECRET")
 
@@ -1420,8 +1707,7 @@ def live_positions():
 def debug_positions():
     """Debug endpoint - returns raw CoinDCX positions response to identify field names."""
     try:
-        from dotenv import load_dotenv
-        load_dotenv("/home/ubuntu/trading-bot/.env")
+        _load_env()
         key = os.getenv("COINDCX_API_KEY")
         secret = os.getenv("COINDCX_API_SECRET")
         if not key or not secret:
@@ -1436,4 +1722,91 @@ def debug_positions():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    # When run as "python app.py": enable SocketIO + live chart relay. When run under gunicorn, app stays plain Flask (no 502).
+    try:
+        from flask_socketio import SocketIO, join_room
+        _sio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
+        _relay_state = {
+            "lock": threading.Lock(),
+            "requested_pair": None,
+            "requested_interval": "5m",
+            "socket": None,
+            "thread": None,
+            "running": True,
+        }
+
+        def _relay_thread():
+            import os
+            _load_env()
+            key = os.getenv("COINDCX_API_KEY") or os.getenv("API_KEY")
+            secret = os.getenv("COINDCX_API_SECRET") or os.getenv("API_SECRET")
+            if not key or not secret:
+                app.logger.warning("Chart relay: no API credentials, live chart disabled")
+                return
+            while _relay_state["running"]:
+                with _relay_state["lock"]:
+                    pair = _relay_state["requested_pair"]
+                    interval = _relay_state["requested_interval"]
+                if not pair:
+                    time.sleep(1)
+                    continue
+                try:
+                    dcx = CoinDCXSocket(key, secret)
+                    with _relay_state["lock"]:
+                        _relay_state["socket"] = dcx
+                    def _on_candle(data):
+                        try:
+                            t_raw = data.get("t") or data.get("timestamp")
+                            ts_sec = int(t_raw) if t_raw is not None else None
+                            if ts_sec is not None and ts_sec > 1e10:
+                                ts_sec = ts_sec // 1000
+                            if ts_sec is None:
+                                ts_sec = int(time.time())
+                            _sio.emit("candlestick", {
+                                "pair": pair, "interval": interval, "time": ts_sec,
+                                "open": float(data.get("o", 0)), "high": float(data.get("h", 0)),
+                                "low": float(data.get("l", 0)), "close": float(data.get("c", 0)),
+                                "isClosed": bool(data.get("x", False)),
+                            }, room="chart")
+                        except Exception as e:
+                            app.logger.debug(f"Chart relay emit: {e}")
+                    dcx.on("candlestick", _on_candle)
+                    dcx.connect(pair, interval)
+                    dcx.wait()
+                except Exception as e:
+                    app.logger.debug(f"Chart relay: {e}")
+                finally:
+                    with _relay_state["lock"]:
+                        _relay_state["socket"] = None
+                time.sleep(0.5)
+
+        @_sio.on("connect")
+        def _chart_connect():
+            pass
+
+        @_sio.on("subscribe_candles")
+        def _chart_subscribe(data):
+            try:
+                pair = (data or {}).get("pair") or (data or {}).get("pair_id")
+                interval = (data or {}).get("interval", "5m")
+                if not pair:
+                    return
+                with _relay_state["lock"]:
+                    _relay_state["requested_pair"] = pair
+                    _relay_state["requested_interval"] = interval
+                    if _relay_state["thread"] is None or not _relay_state["thread"].is_alive():
+                        _relay_state["thread"] = threading.Thread(target=_relay_thread, daemon=True)
+                        _relay_state["thread"].start()
+                    sock = _relay_state.get("socket")
+                    if sock is not None:
+                        try:
+                            sock.disconnect()
+                        except Exception:
+                            pass
+                join_room("chart")
+            except Exception as e:
+                app.logger.debug(f"subscribe_candles: {e}")
+
+        _sio.run(app, host="0.0.0.0", port=5000, debug=False, allow_unsafe_werkzeug=True)
+    except ImportError:
+        app.run(host="0.0.0.0", port=5000, debug=False)

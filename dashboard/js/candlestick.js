@@ -1,5 +1,5 @@
 /* ════════════════════════════════════════════════════════════════
-   CANDLESTICK CHART — TradingView Style Interactive Chart
+   CANDLESTICK CHART — TradingView Style Interactive Chart (Live via WebSocket)
    ════════════════════════════════════════════════════════════════ */
 
 let candleChart = null;
@@ -7,6 +7,9 @@ let candleSeries = null;
 let currentTimeframe = '5m';
 let selectedCandlePair = '';
 let priceChartPair = '';
+let chartSocket = null;
+let chartLiveConnected = false;
+let lastCandleForInfo = null; // so we can refresh confidence when pairSignals updates
 
 // Initialize candlestick chart with lightweight-charts
 function initCandleChart() {
@@ -82,7 +85,7 @@ async function updateCandleChart() {
     const interval = currentTimeframe;
 
     // Fetch candles from API
-    const response = await fetch(`${API}/api/candles?pair=${encodeURIComponent(pair)}&interval=${interval}&limit=100`);
+    const response = await fetch(`${API}/api/candles?pair=${encodeURIComponent(pair)}&interval=${interval}&limit=50`);
     if (!response.ok) return;
 
     const data = await response.json();
@@ -142,13 +145,7 @@ async function updateCandleChart() {
     if (dedupedData.length > 0) {
       candleSeries.setData(dedupedData);
       candleChart.timeScale().fitContent();
-
-      // Update info with current price and confidence
-      const last = dedupedData[dedupedData.length - 1];
-      const baseCoin = pair.replace('B-', '').replace('_USDT', '');
-      const readiness = pairReadiness[pair]?.readiness || 0;
-      document.getElementById('candleInfo').textContent =
-        `${baseCoin} | O: ${last.open.toFixed(4)} H: ${last.high.toFixed(4)} L: ${last.low.toFixed(4)} C: ${last.close.toFixed(4)} | Confidence: ${readiness.toFixed(1)}%`;
+      updateCandleInfo(pair, dedupedData[dedupedData.length - 1]);
     } else {
       console.warn('No valid candle data after parsing');
     }
@@ -157,12 +154,89 @@ async function updateCandleChart() {
   }
 }
 
+function updateCandleInfo(pair, lastCandle) {
+  if (!pair) return;
+  if (lastCandle) lastCandleForInfo = lastCandle;
+  const candle = lastCandle || lastCandleForInfo;
+  const el = document.getElementById('candleInfo');
+  if (!el) return;
+  const baseCoin = pair.replace('B-', '').replace('_USDT', '');
+  // Use same confidence as Quick View / Trading Pairs (pairSignals.signal_strength); fallback to pairReadiness
+  const pairData = (typeof pairSignals !== 'undefined' && Array.isArray(pairSignals)) ? pairSignals.find(function (p) { return p.pair === pair; }) : null;
+  const confidence = (pairData && pairData.signal_strength != null) ? Number(pairData.signal_strength) : ((typeof pairReadiness !== 'undefined' && pairReadiness && pairReadiness[pair]) ? pairReadiness[pair].readiness : 0);
+  const liveTag = chartLiveConnected ? ' \u2022 LIVE' : '';
+  if (!candle) {
+    el.textContent = baseCoin + ' | Confidence: ' + confidence.toFixed(1) + '%' + liveTag;
+    return;
+  }
+  el.textContent =
+    baseCoin + ' | O: ' + candle.open.toFixed(4) + ' H: ' + candle.high.toFixed(4) + ' L: ' + candle.low.toFixed(4) + ' C: ' + candle.close.toFixed(4) + ' | Confidence: ' + confidence.toFixed(1) + '%' + liveTag;
+}
+
+function refreshCandleInfo() {
+  if (selectedCandlePair) updateCandleInfo(selectedCandlePair, null);
+}
+
+// ── Live chart via Socket.IO (no polling) ──
+function connectChartSocket() {
+  if (typeof io === 'undefined') return;
+  const baseUrl = (typeof API !== 'undefined' && API && API.startsWith('http')) ? API.replace(/\/$/, '') : window.location.origin;
+  if (chartSocket) {
+    chartSocket.disconnect();
+    chartSocket = null;
+  }
+  chartSocket = io(baseUrl, { path: '/socket.io', transports: ['websocket', 'polling'], reconnection: false, reconnectionAttempts: 0 });
+  let connectErrorLogged = false;
+  chartSocket.on('connect', () => {
+    chartLiveConnected = true;
+    connectErrorLogged = false;
+    subscribeChartCandles();
+    const el = document.getElementById('candleInfo');
+    if (el && selectedCandlePair) {
+      const baseCoin = selectedCandlePair.replace('B-', '').replace('_USDT', '');
+      if (el.textContent.indexOf('LIVE') === -1) el.textContent += ' ● LIVE';
+    }
+  });
+  chartSocket.on('connect_error', () => {
+    chartLiveConnected = false;
+    if (!connectErrorLogged) {
+      connectErrorLogged = true;
+      console.warn('Chart live socket unavailable (chart uses REST fallback). Manual Execute and trades do not need it.');
+    }
+  });
+  chartSocket.on('disconnect', () => {
+    chartLiveConnected = false;
+  });
+  chartSocket.on('candlestick', (payload) => {
+    if (!candleSeries || !payload) return;
+    if (payload.pair !== selectedCandlePair || payload.interval !== currentTimeframe) return;
+    const bar = {
+      time: payload.time,
+      open: Number(payload.open),
+      high: Number(payload.high),
+      low: Number(payload.low),
+      close: Number(payload.close)
+    };
+    if (Number.isFinite(bar.open + bar.high + bar.low + bar.close)) {
+      candleSeries.update(bar);
+      updateCandleInfo(selectedCandlePair, bar);
+    }
+  });
+}
+
+function subscribeChartCandles() {
+  if (!chartSocket || !chartSocket.connected || !selectedCandlePair) return;
+  chartSocket.emit('subscribe_candles', { pair: selectedCandlePair, interval: currentTimeframe });
+}
+
 // Handle pair selection for candlestick
 function onCandlePairSelect() {
   const select = document.getElementById('candlePairSelect');
   if (select && select.value) {
     selectedCandlePair = select.value;
     updateCandleChart();
+    subscribeChartCandles();
+    if (typeof updateTradingViewSymbol === 'function') updateTradingViewSymbol();
   }
 }
 
@@ -183,10 +257,12 @@ function onTimeframeChange() {
   if (tf !== currentTimeframe) {
     currentTimeframe = tf;
     updateCandleChart();
+    subscribeChartCandles();
+    if (typeof updateTradingViewSymbol === 'function') updateTradingViewSymbol();
   }
 }
 
-// Auto-refresh candlestick data
+// Fallback: refresh via REST when live socket is down (e.g. every 60s)
 setInterval(() => {
-  if (candleChart && candleSeries && selectedCandlePair) updateCandleChart();
-}, 10000); // Update every 10 seconds
+  if (candleChart && candleSeries && selectedCandlePair && !chartLiveConnected) updateCandleChart();
+}, 60000);
