@@ -1,0 +1,4 @@
+//@version=5
+indicator("Sample RSI oversold", overlay=false)
+rsiVal = ta.rsi(close, 14)
+plot(rsiVal)

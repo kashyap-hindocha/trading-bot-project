@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#0f172a">
+    <title>AlgoTrader | CoinDCX</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <style>
+        body { background: #0f172a; padding-bottom: max(1rem, env(safe-area-inset-bottom, 0px)); }
+        .touch-scroll { -webkit-overflow-scrolling: touch; }
+        button, a, input, select, textarea, label { -webkit-tap-highlight-color: rgba(148, 163, 184, 0.15); }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-200 px-3 py-3 sm:p-4 min-h-screen">
+    <div id="toast" class="fixed z-50 hidden shadow-lg left-3 right-3 bottom-[max(1rem,env(safe-area-inset-bottom,0px))] sm:left-auto sm:right-4 sm:max-w-md sm:mx-0 mx-auto max-w-none px-4 py-3 rounded-lg text-sm"></div>
+    <div class="max-w-6xl mx-auto w-full min-w-0">
+        <div class="bg-slate-800/80 rounded-2xl p-3 sm:p-4 mb-4 flex flex-col gap-3 sm:flex-row sm:justify-between sm:items-center">
+            <div class="flex flex-wrap items-center gap-2 sm:gap-3 min-w-0">
+                <i class="fas fa-robot text-blue-500 text-xl sm:text-2xl shrink-0"></i>
+                <span class="font-bold text-base sm:text-xl truncate">AlgoTrader | CoinDCX</span>
+                <span id="mode-badge" class="px-2 py-0.5 text-xs rounded-full bg-green-500/20 text-green-300 shrink-0">{{ mode|upper }} MODE</span>
+            </div>
+            <div class="flex flex-col items-stretch sm:items-end text-xs sm:text-sm gap-0.5 min-w-0 w-full sm:w-auto">
+                <span class="text-slate-400 break-words" id="ltp">LTP: {% if symbol and symbol.endswith('INR') %}₹{{ "%.5f"|format(ltp) }} · {{ symbol }}{% else %}{{ "%.5f"|format(ltp) }} USDT · {{ symbol }}{% endif %}</span>
+                <span class="text-xs text-slate-500 break-words" id="feed-hint">Connecting…</span>
+                <span class="text-xs text-slate-600" id="ws-status">Connecting…</span>
+            </div>
+        </div>
+
+        <div class="bg-slate-800/80 rounded-xl p-4 mb-4 border border-slate-700">
+            <h3 class="font-semibold mb-2 text-sm"><i class="fas fa-exchange-alt text-amber-400"></i> Trading pair (CoinDCX)</h3>
+            <p class="text-xs text-slate-500 mb-2">Active: <span id="pair-label">{{ symbol }}</span> · TradingView: <span id="tv-label">{{ tradingview_symbol }}</span></p>
+            <p class="text-xs text-slate-600 mb-2">Changing pair stops feeds, clears in-memory OHLC/LTP for this process, resets paper balance and open paper positions, then reconnects. SQLite trade history is kept.</p>
+            <div class="flex flex-col sm:flex-row sm:flex-wrap gap-2 sm:items-end">
+                <div class="flex-1 min-w-0 w-full sm:min-w-[220px]">
+                    <label class="text-xs text-slate-400">Symbol (USDT or INR pairs)</label>
+                    <input type="text" id="pair-search" list="pair-list" value="{{ symbol }}" class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2.5 sm:py-1.5 text-base sm:text-sm font-mono min-h-[44px] sm:min-h-0" placeholder="e.g. ETHUSDT or ETHINR" autocomplete="off" />
+                    <datalist id="pair-list"></datalist>
+                </div>
+                <button type="button" class="w-full sm:w-auto shrink-0 bg-slate-700 px-3 py-2.5 sm:py-1.5 rounded text-sm min-h-[44px] sm:min-h-0" onclick="loadMarkets()">Load / refresh list</button>
+                <button type="button" class="w-full sm:w-auto shrink-0 bg-amber-600 px-3 py-2.5 sm:py-1.5 rounded text-sm font-medium min-h-[44px] sm:min-h-0" onclick="applyPair()">Apply pair &amp; restart bot</button>
+            </div>
+            <p class="text-xs text-slate-600 mt-1">Tip: type part of the symbol (e.g. <span class="font-mono text-slate-400">XRP</span>) to narrow the list — pairs are sorted A–Z and there are many markets.</p>
+            <p id="pair-msg" class="text-xs text-slate-500 mt-2"></p>
+        </div>
+
+        <div class="bg-slate-800/80 rounded-xl p-4 mb-4 border border-slate-700">
+            <h3 class="font-semibold mb-2 text-sm"><i class="fas fa-clock text-cyan-400"></i> Timeframe &amp; scalper</h3>
+            <p class="text-xs text-slate-500 mb-2">Scalper: 1m signals only; TP/SL distance = sum of (high−low) of the last two completed 1m candles (symmetric around fill). If scalper is off, pick a timeframe — bot signals on that candle close. CoinDCX feed: 1m, 5m, 15m, 1h. Binance OHLC adds 3m, 30m, 4h.</p>
+            <div class="flex flex-col sm:flex-row sm:flex-wrap gap-3 sm:gap-4 sm:items-end">
+                <label class="flex items-center gap-3 text-sm cursor-pointer min-h-[44px] sm:min-h-0 py-1 sm:py-0">
+                    <input type="checkbox" id="scalper" class="h-5 w-5 shrink-0 rounded border-slate-500" {% if scalper_active %}checked{% endif %} />
+                    <span class="leading-snug">Scalper (1m + auto TP/SL)</span>
+                </label>
+                <div class="w-full sm:w-auto">
+                    <label class="text-xs text-slate-400 block">Chart timeframe</label>
+                    <select id="chartTF" class="w-full sm:w-auto min-w-0 bg-slate-900 border border-slate-600 rounded px-3 py-2.5 sm:py-1.5 text-base sm:text-sm font-mono min-h-[44px] sm:min-h-0" {% if scalper_active %}disabled{% endif %}>
+                        {% for tf in allowed_timeframes %}
+                        <option value="{{ tf }}" {% if tf == (chart_timeframe or effective_timeframe) %}selected{% endif %}>{{ tf }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <button type="button" class="w-full sm:w-auto bg-cyan-700 px-3 py-2.5 sm:py-1.5 rounded text-sm font-medium min-h-[44px] sm:min-h-0" onclick="applyTradingStyle()">Apply</button>
+            </div>
+            <p class="text-xs text-slate-500 mt-2">Scalper and timeframe save to the server automatically when you change them (same as Apply). Live stream refreshes every ~0.5s — without that save, the checkbox would snap back.</p>
+            <p class="text-xs text-slate-500 mt-1">Effective: <span id="eff-tf-label">{{ effective_timeframe }}</span> · TV interval: <span id="tv-int-label">{{ tradingview_interval }}</span></p>
+            <p id="tf-msg" class="text-xs text-slate-600 mt-1"></p>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+            <div class="bg-slate-800 p-4 rounded-xl">
+                <p class="text-slate-400 text-sm" id="paper-equity-label">Paper equity <span class="text-slate-600">(free + margin ± open P&amp;L)</span></p>
+                <p class="text-2xl font-bold" id="vbal">—</p>
+                <p class="text-xs text-slate-500 mt-1" id="vbal-free">—</p>
+            </div>
+            <div class="bg-slate-800 p-4 rounded-xl">
+                <p class="text-slate-400 text-sm" id="openpnl-label">Open P&amp;L (Paper)</p>
+                <p class="text-2xl font-bold text-green-400" id="openpnl">—</p>
+            </div>
+            <div class="bg-slate-800 p-4 rounded-xl">
+                <p class="text-slate-400 text-sm">Closed trades (UTC today)</p>
+                <p class="text-2xl font-bold" id="tdcount">—</p>
+            </div>
+            <div class="bg-slate-800 p-4 rounded-xl">
+                <p class="text-slate-400 text-sm">Win rate (today)</p>
+                <p class="text-2xl font-bold" id="winrate">—</p>
+            </div>
+        </div>
+
+        <div class="bg-slate-800 rounded-xl overflow-hidden mb-6 border border-slate-700">
+            <div class="px-3 sm:px-4 py-2 border-b border-slate-700 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-1 min-w-0">
+                <h3 class="font-semibold text-sm truncate"><i class="fas fa-chart-line text-emerald-400"></i> Live chart (TradingView)</h3>
+                <span class="text-xs text-slate-500 truncate font-mono">{{ tradingview_symbol }}</span>
+            </div>
+            <div class="tradingview-widget-container h-[min(520px,58vh)] min-h-[280px] sm:h-[520px] sm:min-h-0 w-full">
+                <div class="tradingview-widget-container__widget h-full w-full min-h-[260px]"></div>
+                <div class="tradingview-widget-copyright text-center text-xs py-1 bg-slate-900/80">
+                    <a href="https://www.tradingview.com/" rel="noopener nofollow" target="_blank" class="text-slate-500 hover:text-slate-400">
+                        <span class="text-blue-400">Track all markets on TradingView</span>
+                    </a>
+                </div>
+                <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js" async>
+{
+  "autosize": true,
+  "height": 500,
+  "width": "100%",
+  "symbol": {{ tradingview_symbol|tojson }},
+  "interval": {{ tradingview_interval|tojson }},
+  "timezone": "Etc/UTC",
+  "theme": "dark",
+  "style": "1",
+  "locale": "en",
+  "withdateranges": true,
+  "hide_side_toolbar": false,
+  "allow_symbol_change": true,
+  "details": false,
+  "hotlist": false,
+  "calendar": false,
+  "support_host": "https://www.tradingview.com"
+}
+                </script>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
+            <div class="lg:col-span-2 space-y-4 order-2 lg:order-1 min-w-0">
+                <div class="bg-slate-800 rounded-xl p-4">
+                    <h3 class="font-semibold mb-2"><i class="fas fa-flask text-cyan-400"></i> Strategy analysis (live from bot)</h3>
+                    <pre id="analysis" class="text-xs bg-slate-900 p-3 rounded border border-slate-600 overflow-x-auto max-w-full text-slate-300 whitespace-pre-wrap break-words touch-scroll">Loading…</pre>
+                </div>
+                <div class="bg-slate-800 rounded-xl p-4">
+                    <h3 class="font-semibold mb-2"><i class="fas fa-code text-blue-400"></i> Custom Indicator (Pine Script)</h3>
+                    <textarea id="pine" class="w-full min-h-[8rem] h-32 bg-slate-900 text-base sm:text-sm p-3 rounded border border-slate-600 font-mono max-w-full" placeholder='//@version=5&#10;indicator("RSI+EMA")'></textarea>
+                    <div class="flex flex-col sm:flex-row gap-2 mt-2">
+                        <button type="button" class="w-full sm:w-auto bg-blue-600 px-3 py-2.5 sm:py-2 rounded text-sm min-h-[44px] sm:min-h-0" onclick="uploadPine()">Save Pine &amp; compile</button>
+                    </div>
+                    <p class="text-xs text-slate-500 mt-1">Strategy is <strong>only</strong> your Pine: <code class="text-slate-400">Save Pine &amp; compile</code> runs <code class="text-slate-400">pine2py</code> and must succeed to activate trading.</p>
+                    <p id="pine-result" class="text-xs text-slate-500 mt-2"></p>
+                </div>
+                <div class="bg-slate-800 rounded-xl p-4">
+                    <h3 class="font-semibold mb-2"><i class="fas fa-bolt text-yellow-400"></i> Live Signal Feed</h3>
+                    <div id="signals" class="space-y-1 text-sm text-slate-400">Loading…</div>
+                </div>
+                <div class="bg-slate-800 rounded-xl p-4">
+                    <h3 class="font-semibold mb-2"><i class="fas fa-chart-simple text-blue-400"></i> Open Positions</h3>
+                    <p class="text-xs text-slate-500 mb-2" id="positions-hint">Paper: use <strong>Close</strong> to exit at market (LTP). Live: manage on exchange.</p>
+                    <div id="positions" class="text-sm text-slate-200 overflow-x-auto overflow-y-visible touch-scroll max-w-full -mx-1 px-1">—</div>
+                </div>
+            </div>
+            <div class="space-y-4 order-1 lg:order-2 min-w-0">
+                <div class="bg-slate-800 rounded-xl p-4">
+                    <h3 class="font-semibold mb-2">Mode</h3>
+                    <select id="mode" class="w-full bg-slate-900 p-2.5 rounded mb-2 text-base sm:text-sm min-h-[44px]">
+                        <option value="paper" {% if mode == 'paper' %}selected{% endif %}>Paper</option>
+                        <option value="live" {% if mode == 'live' %}selected{% endif %}>Live</option>
+                    </select>
+                    <button type="button" class="w-full bg-slate-700 py-2.5 rounded min-h-[44px] text-sm" onclick="setMode()">Apply mode</button>
+                </div>
+                <div class="bg-slate-800 rounded-xl p-4">
+                    <h3 class="font-semibold mb-2"><i class="fas fa-cart-plus"></i> Manual Override</h3>
+                    <p class="text-xs text-slate-500 mb-2">Use <strong>BUY</strong> or <strong>SELL</strong> (price comes from live LTP).</p>
+                    <select id="mkt" class="w-full bg-slate-900 p-2.5 rounded mb-2 text-base sm:text-sm min-h-[44px]">
+                        <option value="{{ symbol }}">{{ symbol }} (configured pair)</option>
+                    </select>
+                    <div class="flex gap-2 mb-2">
+                        <button type="button" class="flex-1 bg-green-600 py-3 sm:py-2 rounded font-medium min-h-[48px] text-base sm:text-sm" onclick="manualOrder('buy')">BUY</button>
+                        <button type="button" class="flex-1 bg-red-600 py-3 sm:py-2 rounded font-medium min-h-[48px] text-base sm:text-sm" onclick="manualOrder('sell')">SELL</button>
+                    </div>
+                    <input type="text" id="qty" placeholder="Quantity" class="w-full bg-slate-900 p-2.5 rounded mb-2 text-base sm:text-sm min-h-[44px]" value="0.001" inputmode="decimal">
+                    <label class="text-xs text-slate-400">Leverage</label>
+                    <input type="number" id="lev" class="w-full bg-slate-900 p-2.5 rounded mb-2 text-base sm:text-sm min-h-[44px]" value="{{ default_leverage }}" min="1" max="20" inputmode="numeric">
+                    <div class="flex flex-col sm:flex-row gap-2">
+                        <input type="text" id="tp" placeholder="TP (optional)" class="w-full sm:w-1/2 bg-slate-900 p-2.5 rounded text-base sm:text-sm min-h-[44px]" inputmode="decimal">
+                        <input type="text" id="sl" placeholder="SL (optional)" class="w-full sm:w-1/2 bg-slate-900 p-2.5 rounded text-base sm:text-sm min-h-[44px]" inputmode="decimal">
+                    </div>
+                </div>
+                <div class="bg-slate-800 rounded-xl p-4">
+                    <h3 class="font-semibold mb-2"><i class="fas fa-shield-alt text-red-400"></i> Risk</h3>
+                    <p class="text-sm text-slate-400">Limits enforced server-side from .env</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script>
+    const DEFAULT_LEVERAGE = {{ default_leverage | int }};
+    function escapeHtml(s) {
+        return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+    function escapeAttr(s) {
+        return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+    }
+    /** Bot-wide: round to 5 decimal places, then trim trailing zeros (prices, qty). */
+    function fmtDecimal5(n) {
+        if (n == null || n === '') return '—';
+        const x = Number(n);
+        if (!Number.isFinite(x)) return '—';
+        const r = Math.round(x * 1e5) / 1e5;
+        return r.toFixed(5).replace(/\.?0+$/, '') || '0';
+    }
+    /**
+     * Signed P&amp;L in quote currency (INR: ₹ prefix; USDT: suffix). 8 dp for micro P&amp;L.
+     */
+    function fmtSignedPnlQuote(qc, n) {
+        if (n == null || n === '') return '—';
+        const x = Number(n);
+        if (!Number.isFinite(x)) return '—';
+        const places = 8;
+        const r = Math.round(x * Math.pow(10, places)) / Math.pow(10, places);
+        const neg = r < 0;
+        const abs = Math.abs(r);
+        let body = abs.toFixed(places).replace(/\.?0+$/, '');
+        if (body === '') body = '0';
+        const sign = neg ? '-' : '+';
+        if (qc === 'INR') return sign + '₹' + body;
+        return sign + body + ' USDT';
+    }
+    /** Per-unit price (LTP, entry) in quote currency — not base-asset qty. */
+    function fmtPriceQuote(qc, n) {
+        if (n == null || n === '') return '—';
+        const x = Number(n);
+        if (!Number.isFinite(x)) return '—';
+        const s = fmtDecimal5(n);
+        if (qc === 'INR') return '₹' + s;
+        return s + ' USDT';
+    }
+    function showToast(msg, isErr) {
+        const el = document.getElementById('toast');
+        el.textContent = msg;
+        el.className = 'fixed z-50 px-4 py-3 rounded-lg text-sm shadow-lg left-3 right-3 bottom-[max(1rem,env(safe-area-inset-bottom,0px))] sm:left-auto sm:right-4 sm:max-w-md sm:mx-0 mx-auto max-w-none ' +
+            (isErr ? 'bg-red-900/90 text-red-100' : 'bg-slate-700 text-slate-100');
+        el.classList.remove('hidden');
+        clearTimeout(window._toastT);
+        window._toastT = setTimeout(() => el.classList.add('hidden'), 8000);
+    }
+    function applyPayload(j) {
+        if (!j || j.type === 'error') {
+            if (j && j.message) showToast('Stream: ' + j.message, true);
+            return;
+        }
+        const qc = (j.quote_currency || (j.runtime_pair && j.runtime_pair.quote_currency) || 'USDT').toUpperCase();
+        window.__quoteCurrency = qc;
+        document.getElementById('ltp').textContent = 'LTP: ' + (Number.isFinite(Number(j.last_price)) ? fmtPriceQuote(qc, j.last_price) : '—') + ' · ' + (j.symbol || '');
+        const fh = document.getElementById('feed-hint');
+        if (fh) {
+            const ltpSrc = j.analysis && j.analysis.ltp_source;
+            const ohlc = j.ohlc_feed || (j.analysis && j.analysis.ohlc_feed);
+            const bs = j.analysis && j.analysis.binance_symbol;
+            const cn = j.analysis && j.analysis.chart_note;
+            if (qc === 'INR') {
+                fh.textContent = (cn ? cn + ' ' : '') + 'LTP & orders: INR on CoinDCX (' + (j.analysis && j.analysis.coindcx_pair || '') + '). OHLC: ' + (ohlc || '') + '.';
+            } else if (ltpSrc === 'binance') {
+                fh.textContent = 'LTP: Binance spot (matches TradingView ' + (j.tradingview_symbol || '') + '). OHLC candles: ' + (ohlc || '') + (bs ? ' · ' + bs : '') + '.';
+            } else if (ltpSrc === 'coindcx_rest') {
+                fh.textContent = 'LTP: CoinDCX public REST (Binance unavailable for this symbol). OHLC: ' + (ohlc || '') + '.';
+            } else {
+                fh.textContent = 'LTP: cache/fallback. OHLC: ' + (ohlc || '') + '. Prefer a pair listed on Binance for TV-aligned prices.';
+            }
+        }
+        document.getElementById('mode-badge').textContent = (j.mode || 'paper').toUpperCase() + ' MODE';
+        {
+            const pel = document.getElementById('paper-equity-label');
+            const opl = document.getElementById('openpnl-label');
+            if (pel) pel.innerHTML = 'Paper equity <span class="text-slate-600">(' + qc + ' · free + margin ± open P&amp;L)</span>';
+            if (opl) opl.textContent = 'Open P&L (Paper, ' + qc + ')';
+        }
+        {
+            const eq = j.balance_paper_equity != null ? j.balance_paper_equity : j.balance_paper;
+            const freeEl = document.getElementById('vbal-free');
+            const qcur = qc;
+            const money = qcur === 'INR' ? function (n) { return '₹' + Number(n).toFixed(2); } : function (n) { return Number(n).toFixed(2) + ' USDT'; };
+            if (eq != null) {
+                document.getElementById('vbal').textContent = money(eq);
+            }
+            if (j.balance_paper_free != null && freeEl) {
+                freeEl.textContent = 'Free (available): ' + money(j.balance_paper_free);
+            } else if (freeEl) {
+                freeEl.textContent = '';
+            }
+        }
+        {
+            const rawU = j.unrealized_pnl != null ? j.unrealized_pnl : j.unrealized_pnl_paper;
+            if (rawU != null) {
+                const u = Number(rawU);
+                const el = document.getElementById('openpnl');
+                el.textContent = fmtSignedPnlQuote(qc, u);
+                el.className = 'text-2xl font-bold ' + (u >= 0 ? 'text-green-400' : 'text-red-400');
+            }
+        }
+        const st = j.stats_today || {};
+        document.getElementById('tdcount').textContent = st.closed_count != null ? String(st.closed_count) : '—';
+        document.getElementById('winrate').textContent =
+            st.win_rate_pct != null ? st.win_rate_pct.toFixed(1) + '%' : '—';
+        if (j.analysis) {
+            document.getElementById('analysis').textContent = JSON.stringify(j.analysis, null, 2);
+        }
+        const levIn = document.getElementById('lev');
+        if (j.default_leverage && (!levIn.value || levIn.value === String(DEFAULT_LEVERAGE))) {
+            levIn.value = j.default_leverage;
+        }
+        const isPaper = (j.mode || 'paper') === 'paper';
+        const ph = document.getElementById('positions-hint');
+        if (ph) ph.style.display = isPaper ? 'block' : 'none';
+        let rows = '<table class="w-full min-w-[640px] text-sm border-collapse border border-slate-700 rounded-md overflow-hidden">';
+        rows += '<thead><tr class="text-left text-xs text-slate-500 border-b border-slate-700 bg-slate-900/50">';
+        rows += '<th class="font-medium px-3 py-2">Symbol</th><th class="font-medium px-3 py-2">Side</th>';
+        rows += '<th class="font-medium px-3 py-2 text-right">Qty <span class="text-slate-600">(base)</span></th>';
+        rows += '<th class="font-medium px-3 py-2 text-right">Entry <span class="text-slate-600">(' + qc + ')</span></th>';
+        rows += '<th class="font-medium px-3 py-2 text-right">LTP <span class="text-slate-600">(' + qc + ')</span></th>';
+        rows += '<th class="font-medium px-3 py-2 text-right">P&amp;L <span class="text-slate-600">(' + qc + ')</span></th>';
+        if (isPaper) rows += '<th class="font-medium px-3 py-2 text-right">Action</th>';
+        rows += '</tr></thead><tbody>';
+        for (const p of (j.open_positions || [])) {
+            const side = (p.side || '').toLowerCase();
+            const sideCls = side === 'buy' ? 'text-emerald-400' : side === 'sell' ? 'text-rose-400' : 'text-slate-300';
+            const upnl = p.unrealized_pnl;
+            const pnlCls = upnl == null || !Number.isFinite(Number(upnl))
+                ? 'text-slate-500'
+                : Number(upnl) >= 0 ? 'text-emerald-400' : 'text-rose-400';
+            rows += '<tr class="border-b border-slate-700/80 last:border-0">';
+            rows += `<td class="px-3 py-2 align-middle text-slate-200">${escapeHtml(p.symbol || '')}</td>`;
+            rows += `<td class="px-3 py-2 align-middle font-medium capitalize ${sideCls}">${escapeHtml(p.side || '')}</td>`;
+            rows += `<td class="px-3 py-2 align-middle text-right font-mono text-slate-200 tabular-nums">${fmtDecimal5(p.quantity)}</td>`;
+            rows += `<td class="px-3 py-2 align-middle text-right font-mono text-slate-200 tabular-nums">${fmtPriceQuote(qc, p.entry)}</td>`;
+            rows += `<td class="px-3 py-2 align-middle text-right font-mono text-slate-200 tabular-nums">${p.ltp != null ? fmtPriceQuote(qc, p.ltp) : '—'}</td>`;
+            rows += `<td class="px-3 py-2 align-middle text-right font-mono font-medium tabular-nums ${pnlCls}">${fmtSignedPnlQuote(qc, upnl)}</td>`;
+            if (isPaper && p.trade_id) {
+                rows += `<td class="px-3 py-2 align-middle text-right"><button type="button" data-close-trade class="text-xs bg-amber-700 hover:bg-amber-600 text-white px-2.5 py-1 rounded font-medium" data-trade-id="${escapeAttr(p.trade_id)}">Close</button></td>`;
+            } else if (isPaper) {
+                rows += '<td class="px-3 py-2"></td>';
+            }
+            rows += '</tr>';
+        }
+        rows += '</tbody></table>';
+        document.getElementById('positions').innerHTML = (j.open_positions || []).length ? rows : '<span class="text-slate-500">None</span>';
+        let sigHtml = '';
+        for (const s of (j.signals || []).slice(0, 12)) {
+            const col = s.type === 'buy' ? 'text-green-400' : 'text-red-400';
+            sigHtml += `<div class="flex justify-between ${col}"><span>${s.symbol} ${(s.type || '').toUpperCase()}</span><span class="text-xs text-slate-500">${s.time}</span></div>`;
+        }
+        document.getElementById('signals').innerHTML = sigHtml || '<span class="text-slate-500">No signals in DB yet. Execution follows your <strong>Pine</strong> (saved → <code class="text-slate-400">active.py</code>): when a candle <strong>closes</strong> on the effective timeframe, <code class="text-slate-400">compute()</code> must report <code class="text-slate-400">signal</code> or <code class="text-slate-400">buy</code>/<code class="text-slate-400">sell</code> for the last bar — not every tick like TradingView\'s intrabar line. If <code class="text-slate-400">AUTO_TRADE_ENABLED=false</code>, orders are skipped but signals still log.</span>';
+        const pl = document.getElementById('pair-label');
+        const tl = document.getElementById('tv-label');
+        if (j.runtime_pair) {
+            if (pl) pl.textContent = j.runtime_pair.symbol || j.symbol || '';
+            if (tl) tl.textContent = j.runtime_pair.tradingview_symbol || j.tradingview_symbol || '';
+        } else {
+            if (pl && j.symbol) pl.textContent = j.symbol;
+            if (tl && j.tradingview_symbol) tl.textContent = j.tradingview_symbol;
+        }
+        const mkt = document.getElementById('mkt');
+        if (mkt && j.symbol) {
+            mkt.innerHTML = '<option value="' + j.symbol + '">' + j.symbol + ' (active)</option>';
+        }
+        const ps = document.getElementById('pair-search');
+        if (ps && j.symbol && !ps.value.trim()) ps.value = j.symbol;
+        const effTf = document.getElementById('eff-tf-label');
+        if (effTf && j.effective_timeframe) effTf.textContent = j.effective_timeframe;
+        const tvInt = document.getElementById('tv-int-label');
+        if (tvInt && j.tradingview_interval != null) tvInt.textContent = String(j.tradingview_interval);
+        const scInp = document.getElementById('scalper');
+        const ctf = document.getElementById('chartTF');
+        if (!tradingStyleSyncPaused && scInp && typeof j.scalper_active === 'boolean') {
+            scInp.checked = j.scalper_active;
+        }
+        if (!tradingStyleSyncPaused && ctf && typeof j.scalper_active === 'boolean') {
+            ctf.disabled = j.scalper_active;
+        }
+        if (!tradingStyleSyncPaused && ctf && j.chart_timeframe) {
+            const want = String(j.chart_timeframe);
+            const opt = Array.from(ctf.options).some(function (o) { return o.value === want; });
+            if (opt) ctf.value = want;
+        }
+    }
+    let tradingStyleSyncPaused = false;
+    let tradingStyleApplyTimer = null;
+    function scheduleApplyTradingStyle() {
+        tradingStyleSyncPaused = true;
+        clearTimeout(tradingStyleApplyTimer);
+        tradingStyleApplyTimer = setTimeout(function () { applyTradingStyle(); }, 400);
+    }
+    async function applyTradingStyle() {
+        tradingStyleSyncPaused = true;
+        const scalper = document.getElementById('scalper').checked;
+        const tf = document.getElementById('chartTF').value;
+        const msg = document.getElementById('tf-msg');
+        if (msg) msg.textContent = 'Applying…';
+        try {
+            const r = await fetch('/api/trading-style', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ scalper: scalper, timeframe: tf }),
+            });
+            const j = await r.json();
+            if (j.ok && j.unchanged) {
+                if (msg) msg.textContent = '';
+                showToast('No changes sent.');
+            } else if (j.ok) {
+                if (msg) msg.textContent = '';
+                showToast('Trading style updated (effective ' + (j.effective_timeframe || '') + ').');
+                await refreshFromHttp();
+            } else {
+                if (msg) msg.textContent = j.error || JSON.stringify(j);
+                showToast('Failed: ' + (j.error || 'unknown'), true);
+            }
+        } catch (e) {
+            if (msg) msg.textContent = String(e);
+            showToast(String(e), true);
+        } finally {
+            tradingStyleSyncPaused = false;
+        }
+    }
+    function fillPairDatalist(markets) {
+        const dl = document.getElementById('pair-list');
+        if (!dl) return;
+        dl.innerHTML = '';
+        for (const m of markets) {
+            const o = document.createElement('option');
+            o.value = m.symbol;
+            if (m.quote_currency) {
+                o.label = m.symbol + ' · ' + m.quote_currency;
+            }
+            dl.appendChild(o);
+        }
+    }
+    async function loadMarkets() {
+        const msg = document.getElementById('pair-msg');
+        if (msg) msg.textContent = 'Loading markets…';
+        try {
+            const r = await fetch('/api/markets?quote=all&limit=2000');
+            const j = await r.json();
+            if (!j.ok) throw new Error(j.error || 'failed');
+            fillPairDatalist(j.markets);
+            if (msg) msg.textContent = 'Loaded ' + j.markets.length + ' markets (USDT + INR). Type e.g. XRP to narrow.';
+        } catch (e) {
+            if (msg) msg.textContent = 'Error: ' + e;
+        }
+    }
+    async function filterPairDatalistFromInput() {
+        const inp = document.getElementById('pair-search');
+        const msg = document.getElementById('pair-msg');
+        const q = (inp && inp.value || '').trim();
+        if (q.length < 2) {
+            return;
+        }
+        try {
+            const r = await fetch('/api/markets?quote=all&limit=200&q=' + encodeURIComponent(q));
+            const j = await r.json();
+            if (!j.ok) return;
+            fillPairDatalist(j.markets);
+            if (msg) msg.textContent = 'Filter: ' + j.markets.length + ' match(es) for "' + q + '"';
+        } catch (e) {
+            if (msg) msg.textContent = 'Filter error: ' + e;
+        }
+    }
+    async function applyPair() {
+        const inp = document.getElementById('pair-search');
+        const sym = (inp && inp.value || '').trim().toUpperCase();
+        if (!sym) { showToast('Enter a symbol (e.g. ETHUSDT or ETHINR)', true); return; }
+        const msg = document.getElementById('pair-msg');
+        if (msg) msg.textContent = 'Switching pair…';
+        try {
+            const r = await fetch('/api/pair', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ symbol: sym }) });
+            const j = await r.json();
+            if (j.ok) {
+                showToast('Pair set to ' + j.pair.symbol + '. Reloading…');
+                setTimeout(() => window.location.reload(), 700);
+            } else {
+                if (msg) msg.textContent = j.error || JSON.stringify(j);
+                showToast('Failed: ' + (j.error || 'unknown'), true);
+            }
+        } catch (e) {
+            showToast('Network: ' + e, true);
+            if (msg) msg.textContent = String(e);
+        }
+    }
+    async function closePaperPosition(tradeId) {
+        if (!tradeId) return;
+        const origin = window.location.origin;
+        const paths = ['/api/order-close', '/api/order/close'];
+        const body = JSON.stringify({ trade_id: tradeId });
+        let lastStatus = 0;
+        try {
+            for (let i = 0; i < paths.length; i++) {
+                const r = await fetch(origin + paths[i], {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: body,
+                });
+                lastStatus = r.status;
+                const ct = (r.headers.get('content-type') || '').toLowerCase();
+                if (r.status === 404 && i < paths.length - 1) {
+                    continue;
+                }
+                if (!ct.includes('application/json')) {
+                    const t = await r.text();
+                    showToast('Close failed: HTTP ' + r.status + (t ? ' — ' + t.slice(0, 120) : ''), true);
+                    refreshFromHttp();
+                    return;
+                }
+                const j = await r.json();
+                if (!r.ok) {
+                    const msg = j.detail || j.error || JSON.stringify(j);
+                    showToast('Close failed: HTTP ' + r.status + ' — ' + msg, true);
+                    refreshFromHttp();
+                    return;
+                }
+                if (j.ok) {
+                    const qcx = window.__quoteCurrency || 'USDT';
+                    const px = j.exit_price != null ? fmtPriceQuote(qcx, j.exit_price) : '';
+                    const pnl = j.pnl != null ? fmtSignedPnlQuote(qcx, j.pnl) : '';
+                    showToast('Paper position closed @ ' + px + ' · PnL ' + pnl);
+                } else {
+                    showToast('Close failed: ' + (j.error || JSON.stringify(j)), true);
+                }
+                refreshFromHttp();
+                return;
+            }
+            showToast('Close failed: no API route (HTTP ' + lastStatus + '). Run the app as `python start.py` or `uvicorn src.web.asgi:app`.', true);
+        } catch (e) {
+            showToast('Network: ' + e, true);
+        }
+        refreshFromHttp();
+    }
+    async function refreshFromHttp() {
+        try {
+            const r = await fetch('/api/status');
+            const j = await r.json();
+            applyPayload(j);
+        } catch (e) {
+            console.warn('refreshFromHttp', e);
+        }
+    }
+    function connectDashboardWs() {
+        const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const url = proto + '//' + location.host + '/ws/dashboard';
+        const statusEl = document.getElementById('ws-status');
+        let ws;
+        try {
+            ws = new WebSocket(url);
+        } catch (e) {
+            statusEl.textContent = 'WebSocket unavailable; using HTTP poll';
+            setInterval(refreshFromHttp, 5000);
+            return;
+        }
+        ws.onopen = () => { statusEl.textContent = 'Live updates: WebSocket'; };
+        ws.onmessage = (ev) => {
+            try {
+                applyPayload(JSON.parse(ev.data));
+            } catch (e) { console.warn('ws parse', e); }
+        };
+        ws.onclose = () => {
+            statusEl.textContent = 'Reconnecting…';
+            setTimeout(connectDashboardWs, 3000);
+        };
+        ws.onerror = () => {
+            statusEl.textContent = 'WS error; HTTP backup every 5s';
+            ensureHttpFallback();
+        };
+    }
+    async function loadPineDraft() {
+        try {
+            const r = await fetch('/api/indicator/active');
+            const j = await r.json();
+            if (j.pine_code && j.pine_code.trim()) {
+                document.getElementById('pine').value = j.pine_code;
+            }
+        } catch (e) {
+            console.warn('loadPineDraft', e);
+        }
+    }
+    (function () {
+        const sc = document.getElementById('scalper');
+        const ctf = document.getElementById('chartTF');
+        if (sc && ctf) {
+            sc.addEventListener('change', function () {
+                ctf.disabled = this.checked;
+                scheduleApplyTradingStyle();
+            });
+            ctf.addEventListener('change', function () {
+                scheduleApplyTradingStyle();
+            });
+        }
+        const posEl = document.getElementById('positions');
+        if (posEl) {
+            posEl.addEventListener('click', function (ev) {
+                const btn = ev.target && ev.target.closest('button[data-close-trade]');
+                if (!btn) return;
+                const id = btn.getAttribute('data-trade-id');
+                if (id) closePaperPosition(id);
+            });
+        }
+        const pairSearch = document.getElementById('pair-search');
+        if (pairSearch) {
+            pairSearch.addEventListener('input', function () {
+                clearTimeout(window._pairFilterTimer);
+                window._pairFilterTimer = setTimeout(filterPairDatalistFromInput, 350);
+            });
+        }
+    })();
+    loadPineDraft().then(() => refreshFromHttp());
+    loadMarkets();
+    connectDashboardWs();
+    let httpFallback = null;
+    function ensureHttpFallback() {
+        if (httpFallback) return;
+        httpFallback = setInterval(refreshFromHttp, 5000);
+        const statusEl = document.getElementById('ws-status');
+        if (statusEl && !statusEl.textContent.includes('WebSocket')) {
+            statusEl.textContent = (statusEl.textContent || '') + ' · HTTP backup 5s';
+        }
+    }
+    async function setMode() {
+        const mode = document.getElementById('mode').value;
+        await fetch('/api/mode', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode }) });
+        refreshFromHttp();
+        showToast('Mode set to ' + mode);
+    }
+    function parseOptNum(id) {
+        const s = document.getElementById(id).value.trim();
+        if (!s) return null;
+        const n = parseFloat(s);
+        return Number.isFinite(n) ? n : null;
+    }
+    async function manualOrder(side) {
+        if (side !== 'buy' && side !== 'sell') {
+            showToast('Use the green BUY or red SELL button.', true);
+            return;
+        }
+        const qty = parseFloat(document.getElementById('qty').value);
+        if (!Number.isFinite(qty) || qty <= 0) {
+            showToast('Enter a valid quantity greater than 0', true);
+            return;
+        }
+        const lev = parseInt(document.getElementById('lev').value, 10);
+        const body = {
+            symbol: document.getElementById('mkt').value.trim(),
+            market: document.getElementById('mkt').value.trim(),
+            side: side,
+            quantity: qty,
+            leverage: Number.isFinite(lev) ? lev : DEFAULT_LEVERAGE,
+            tp_price: parseOptNum('tp'),
+            sl_price: parseOptNum('sl')
+        };
+        try {
+            const r = await fetch('/api/order/manual', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            const j = await r.json();
+            if (j.ok) {
+                showToast('Order OK: ' + JSON.stringify(j));
+            } else {
+                showToast('Order failed: ' + (j.error || JSON.stringify(j)), true);
+            }
+        } catch (e) {
+            showToast('Network error: ' + e, true);
+        }
+        refreshFromHttp();
+    }
+    async function uploadPine() {
+        const pine_code = document.getElementById('pine').value;
+        const r = await fetch('/api/indicator/upload', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'user', pine_code }) });
+        const j = await r.json();
+        const meta = { path: j.path, translated: j.translated, bridge_appended: j.bridge_appended, err: j.translate_error || j.detail };
+        document.getElementById('pine-result').textContent = (j.hint || '') + ' ' + JSON.stringify(meta);
+        if (j.ok) {
+            showToast(j.bridge_appended ? 'Pine compiled — edit active.py stub to match TV if needed.' : 'Pine compiled and active.');
+        } else {
+            showToast('Compile failed: ' + (j.detail || j.translate_error || j.error || 'unknown'), true);
+        }
+    }
+    </script>
+</body>
+</html>

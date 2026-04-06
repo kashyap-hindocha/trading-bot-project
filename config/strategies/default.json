@@ -1,0 +1,7 @@
+{
+  "symbol": "BTCUSDT",
+  "timeframe": "1m",
+  "indicator": "user:active",
+  "params": {},
+  "rules": {}
+}

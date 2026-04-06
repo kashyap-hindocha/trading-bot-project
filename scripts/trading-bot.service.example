@@ -1,0 +1,24 @@
+# Copy to systemd and adjust paths/user if your project lives elsewhere:
+#   sudo cp scripts/trading-bot.service.example /etc/systemd/system/trading-bot.service
+#   sudo nano /etc/systemd/system/trading-bot.service   # set User= and paths
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now trading-bot
+#
+# Logs: journalctl -u trading-bot -f
+
+[Unit]
+Description=AlgoTrader CoinDCX dashboard (uvicorn)
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/trading-bot-project
+EnvironmentFile=/home/ubuntu/trading-bot-project/.env
+Environment=PYTHONPATH=/home/ubuntu/trading-bot-project
+ExecStart=/home/ubuntu/trading-bot-project/.venv/bin/python /home/ubuntu/trading-bot-project/start.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

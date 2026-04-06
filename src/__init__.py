@@ -1,0 +1,1 @@
+"""CoinDCX algo trading application."""

@@ -8,7 +8,7 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -21,29 +21,17 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           port: ${{ secrets.SERVER_PORT || 22 }}
           script: |
-            cd ~/trading-bot
-            
-            # Stash any local changes before pulling
-            git stash
-            
-            # Pull latest changes from GitHub
+            set -e
+            cd ~/trading-bot || cd ~/trading-bot-project
+            git stash || true
             git pull origin main
-            
-            # Reapply stashed changes if any (optional - commented out for safety)
-            # git stash pop
-            
-            # Install/update Python dependencies if requirements.txt changed
-            if git diff HEAD@{1} HEAD --name-only | grep -q "requirements.txt"; then
-              pip install -r requirements.txt --user
+            if [ -d .venv ]; then
+              . .venv/bin/activate
+              pip install -r requirements.txt
             fi
-            
-            # Restart services if they exist
-            if systemctl --user is-active --quiet bot.service; then
-              systemctl --user restart bot.service
+            if systemctl is-enabled trading-bot 2>/dev/null; then
+              sudo systemctl restart trading-bot
+            else
+              echo "Optional: run scripts/deploy_ubuntu.sh once to install venv + systemd."
             fi
-            
-            if systemctl --user is-active --quiet server.service; then
-              systemctl --user restart server.service
-            fi
-            
             echo "Deployment completed successfully at $(date)"
