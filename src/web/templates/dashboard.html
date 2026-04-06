@@ -5,8 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <meta name="theme-color" content="#0f172a">
     <title>AlgoTrader | CoinDCX</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect fill='%230f172a' width='32' height='32' rx='6'/%3E%3Cpath fill='%233b82f6' d='M8 22V10h4l3 8 3-8h4v12h-3v-7l-3 7h-2l-3-7v7z'/%3E%3C/svg%3E">
+    <script defer src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta-3/css/all.min.css" crossorigin="anonymous">
     <style>
         body { background: #0f172a; padding-bottom: max(1rem, env(safe-area-inset-bottom, 0px)); }
         .touch-scroll { -webkit-overflow-scrolling: touch; }
@@ -94,33 +95,21 @@
                 <h3 class="font-semibold text-sm truncate"><i class="fas fa-chart-line text-emerald-400"></i> Live chart (TradingView)</h3>
                 <span class="text-xs text-slate-500 truncate font-mono">{{ tradingview_symbol }}</span>
             </div>
-            <div class="tradingview-widget-container h-[min(520px,58vh)] min-h-[280px] sm:h-[520px] sm:min-h-0 w-full">
-                <div class="tradingview-widget-container__widget h-full w-full min-h-[260px]"></div>
+            <div class="tradingview-widget-container h-[min(520px,58vh)] min-h-[280px] sm:h-[520px] sm:min-h-0 w-full bg-slate-900">
+                {# iframe loads lazily so the tab is not stuck waiting on TradingView’s embed script CDN #}
+                <iframe
+                    class="w-full h-full min-h-[260px] border-0 block rounded-b-lg"
+                    style="min-height: 260px;"
+                    loading="lazy"
+                    title="TradingView chart"
+                    referrerpolicy="no-referrer-when-downgrade"
+                    src="https://www.tradingview.com/widgetembed/?frameElementId=tv_chart_bot&amp;symbol={{ tradingview_symbol|urlencode }}&amp;interval={{ tradingview_interval|urlencode }}&amp;theme=dark&amp;style=1&amp;locale=en&amp;timezone=Etc%2FUTC&amp;allow_symbol_change=true&amp;hide_side_toolbar=false&amp;utm_source=embed&amp;utm_medium=widget&amp;utm_campaign=chart"
+                ></iframe>
                 <div class="tradingview-widget-copyright text-center text-xs py-1 bg-slate-900/80">
                     <a href="https://www.tradingview.com/" rel="noopener nofollow" target="_blank" class="text-slate-500 hover:text-slate-400">
                         <span class="text-blue-400">Track all markets on TradingView</span>
                     </a>
                 </div>
-                <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js" async>
-{
-  "autosize": true,
-  "height": 500,
-  "width": "100%",
-  "symbol": {{ tradingview_symbol|tojson }},
-  "interval": {{ tradingview_interval|tojson }},
-  "timezone": "Etc/UTC",
-  "theme": "dark",
-  "style": "1",
-  "locale": "en",
-  "withdateranges": true,
-  "hide_side_toolbar": false,
-  "allow_symbol_change": true,
-  "details": false,
-  "hotlist": false,
-  "calendar": false,
-  "support_host": "https://www.tradingview.com"
-}
-                </script>
             </div>
         </div>
 

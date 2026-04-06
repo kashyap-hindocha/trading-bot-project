@@ -73,6 +73,21 @@ Manual run (dev): `export PYTHONPATH=. && source .venv/bin/activate && python st
 
 A **systemd unit template** is in `scripts/trading-bot.service.example` if you prefer to install the service by hand.
 
+### HTTP without `:8000` (same as `http://IP/` only)
+
+Browsers use **port 80** when you omit the port. The app still listens on **`127.0.0.1:8000`**; **Nginx** listens on **80** and proxies to it (no need to run Python as root).
+
+**One-time on the server:**
+
+```bash
+chmod +x scripts/setup_nginx_port80.sh
+./scripts/setup_nginx_port80.sh
+```
+
+Then open **`http://YOUR_PUBLIC_IP/`** (no `:8000`). In **Oracle Cloud**, add an **ingress** rule for **TCP 80** (you can stop opening **8000** to the internet if only Nginx is public).
+
+Config file: `scripts/nginx-algotrader.conf`.
+
 ## API (spec)
 
 - `GET /health` — liveness.
