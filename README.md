@@ -88,6 +88,12 @@ Then open **`http://YOUR_PUBLIC_IP/`** (no `:8000`). In **Oracle Cloud**, add an
 
 Config file: `scripts/nginx-algotrader.conf`.
 
+**If nginx logs show** `internal redirection cycle ... /index.html`: another config (often Ubuntu `sites-enabled/default` or `conf.d/*.conf`) is using **SPA-style `try_files ... /index.html`**. Run `scripts/setup_nginx_port80.sh` again (it removes/disables those), or check:
+
+```bash
+sudo nginx -T 2>&1 | grep -nE 'try_files|index\\.html'
+```
+
 ## API (spec)
 
 - `GET /health` — liveness.
